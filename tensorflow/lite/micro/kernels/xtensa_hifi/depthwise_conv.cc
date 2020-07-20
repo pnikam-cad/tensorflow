@@ -231,8 +231,6 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
     p_scratch = xtensa_nnlib_scratch_buf;
 
-    filter_depth_padded = (filter_depth + 1) & (~1);
-    filter_size_padded = filter_height * filter_width * filter_depth_padded;
 
     required_scratch = xa_nn_conv2d_depthwise_getsize(
         input_height, input_width, input_depth, filter_height, filter_width,
@@ -245,6 +243,9 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
       return kTfLiteError;
     }
 
+#ifndef NNLIB_HIFI5
+    filter_depth_padded = (filter_depth + 1) & (~1);
+    filter_size_padded = filter_height * filter_width * filter_depth_padded;
     required_scratch += ALIGNED_SIZE(sizeof(float) * filter_size_padded, 8);
     if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
       TF_LITE_KERNEL_LOG(context,
@@ -264,11 +265,14 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
         p_filter[h * filter_depth_padded + c] = 0;
       }
     }
+#else
+    p_filter = const_cast<float*>(filter_data);
+#endif /* NNLIB_HIFI5 */
 
     for (i = 0; i < batches; i++) {
       err = xa_nn_conv2d_depthwise_f32(
           &output_data[i * output_height * output_width * output_depth],
-          p_filter,  // filter_data,
+          p_filter,
           &input_data[i * input_height * input_width * input_depth], bias_data,
           input_height, input_width, input_depth, filter_height, filter_width,
           depth_multiplier, stride_width, stride_height, pad_width, pad_height,
@@ -312,7 +316,7 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
   return kTfLiteOk;
 }
 
-void EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
+TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
                              TfLiteDepthwiseConvParams* params,
                              const OpData* data, const TfLiteTensor* input,
                              const TfLiteTensor* filter,
@@ -333,6 +337,108 @@ void EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
   op_params.quantized_activation_min = std::numeric_limits<int8_t>::min();
   op_params.quantized_activation_max = std::numeric_limits<int8_t>::max();
 
+#ifdef NNLIB_HIFI5
+  if ((params->dilation_width_factor == 1) &&
+      (params->dilation_height_factor == 1)) {
+    const int8 *input_data, *filter_data;
+    const int32_t* bias_data;
+    int8* output_data;
+    const RuntimeShape& input_shape = GetTensorShape(input);
+    const RuntimeShape& filter_shape = GetTensorShape(filter);
+    const RuntimeShape& output_shape = GetTensorShape(output);
+    const RuntimeShape& bias_shape = GetTensorShape(bias);
+
+    input_data = GetTensorData<int8_t>(input);
+    filter_data = GetTensorData<int8_t>(filter);
+    bias_data = GetTensorData<int32_t>(bias);
+    output_data = GetTensorData<int8_t>(output);
+
+    const int stride_width = params->stride_width;
+    const int stride_height = params->stride_height;
+    const int dilation_width_factor = 1;
+    const int dilation_height_factor = 1;
+    const int pad_width = data->padding.width;
+    const int pad_height = data->padding.height;
+    const int depth_multiplier = params->depth_multiplier;
+    const int32 output_activation_min = data->output_activation_min;
+    const int32 output_activation_max = data->output_activation_max;
+    TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
+    TFLITE_DCHECK_EQ(filter_shape.DimensionsCount(), 4);
+    TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 4);
+
+    TFLITE_DCHECK_LE(output_activation_min, output_activation_max);
+    const int batches = MatchingDim(input_shape, 0, output_shape, 0);
+    const int output_depth = MatchingDim(filter_shape, 3, output_shape, 3);
+    const int input_height = input_shape.Dims(1);
+    const int input_width = input_shape.Dims(2);
+    const int input_depth = input_shape.Dims(3);
+    const int filter_height = filter_shape.Dims(1);
+    const int filter_width = filter_shape.Dims(2);
+    const int output_height = output_shape.Dims(1);
+    const int output_width = output_shape.Dims(2);
+    const int filter_depth = filter_shape.Dims(3);
+    TFLITE_DCHECK_EQ(output_depth, input_depth * depth_multiplier);
+    TFLITE_DCHECK_EQ(bias_shape.FlatSize(), output_depth);
+
+    int32_t err, i, input_data_format = 0, output_data_format = 0;
+    void* p_scratch;
+    int required_scratch;
+    int input_precision = PREC_ASYM8;
+    int h, c;
+
+    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
+    p_scratch = xtensa_nnlib_scratch_buf;
+
+    required_scratch = xa_nn_conv2d_depthwise_getsize(
+        input_height, input_width, input_depth, filter_height, filter_width,
+        depth_multiplier, stride_width, stride_height, pad_width, pad_height,
+        output_height, output_width, -4, input_data_format);
+
+    if (required_scratch <= 0) {
+      TF_LITE_KERNEL_LOG(
+          context, "DepthwiseConvSym8PerChannel: \
+          xa_nn_conv2d_depthwise_getsize failed");
+      return kTfLiteError;
+    }
+
+    if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
+      TF_LITE_KERNEL_LOG(context,
+                         "DepthwiseConvSym8PerChannel: \
+                         insufficient scratch memory");
+      return kTfLiteError;
+    }
+
+    for (i = 0; i < batches; i++) {
+      err = xa_nn_conv2d_depthwise_per_chan_sym8sxasym8s(
+          &output_data[i * output_height * output_width * output_depth],
+          filter_data,
+          &input_data[i * input_height * input_width * input_depth], bias_data,
+          input_height, input_width, input_depth, filter_height, filter_width,
+          depth_multiplier, stride_width, stride_height, pad_width, pad_height,
+          output_height, output_width, op_params.input_offset,
+          data->per_channel_output_multiplier, data->per_channel_output_shift,
+          op_params.output_offset, input_data_format,
+          output_data_format, p_scratch);
+
+      CHECK_ERR_HIFI_NNLIB_KER(
+          err, "DepthwiseConvSym8PerChannel: \
+          xa_nn_conv2d_depthwise_asym8xasym8 failed");
+    }
+
+    int out_length = batches * output_height * output_width * output_depth;
+    err = xa_nn_vec_activation_min_max_8_8(output_data,
+                                           output_data,
+                                           output_activation_min,
+                                           output_activation_max,
+                                           out_length);
+
+    CHECK_ERR_HIFI_NNLIB_KER(err,
+        "DepthwiseConvSym8PerChannel: xa_nn_vec_activation_min_max_8_8 "
+        "failed");
+  } 
+  else
+#endif /* NNLIB_HIFI5 */
+  {
   reference_integer_ops::DepthwiseConvPerChannel(
       op_params, data->per_channel_output_multiplier,
       data->per_channel_output_shift, GetTensorShape(input),
@@ -340,6 +446,8 @@ void EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
       GetTensorData<int8>(filter), GetTensorShape(bias),
       GetTensorData<int32>(bias), GetTensorShape(output),
       GetTensorData<int8>(output));
+}
+  return kTfLiteOk;
 }
 
 TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
@@ -414,6 +522,7 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
       return kTfLiteError;
     }
 
+#ifndef NNLIB_HIFI5
     filter_depth_padded = (filter_depth + 3) & (~3);
     filter_size_padded = filter_height * filter_width * filter_depth_padded;
     required_scratch += ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded, 8);
@@ -432,6 +541,14 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
       memcpy(&p_filter[h*filter_depth_padded], &filter_data[h*filter_depth], filter_depth);
       memset(&p_filter[h*filter_depth_padded + filter_depth], -filter_offset, pad_value);
     }
+#else
+    if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
+      TF_LITE_KERNEL_LOG(context,
+                         "DepthwiseConvAsym8: insufficient scratch memory");
+      return kTfLiteError;
+    }
+    p_filter = const_cast<uint8_t *>(filter_data);
+#endif
 
     for (i = 0; i < batches; i++) {
       err = xa_nn_conv2d_depthwise_asym8xasym8(

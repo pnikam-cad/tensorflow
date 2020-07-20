@@ -81,7 +81,7 @@ static inline TfLiteStatus ApplyTimeWeightsBiasAndActivation(
     float* const __restrict__ state_ptr, float* const __restrict__ scratch_ptr,
     float* const __restrict__ output_ptr) {
   // Compute matmul(activation_state, weights_time).
-#if HIFI_VFPU
+#if HIFI_VFPU && !defined NNLIB_HIFI5
   float* scratch_bias = scratch_ptr;
   if (bias_ptr) {
     const float* bias_data = bias_ptr;
@@ -219,7 +219,7 @@ inline TfLiteStatus EvalFloatSVDF(
     float* result = &state_ptr[memory_size - 1];
     float* result_in_batch = result;
 
-#if HIFI_VFPU
+#if HIFI_VFPU && !defined NNLIB_HIFI5  
     float* out_scratch = scratch_ptr;
     float* bias_scratch = output_ptr;
     for (int i = 0; i < num_units; i++) bias_scratch[i] = 0.0f;

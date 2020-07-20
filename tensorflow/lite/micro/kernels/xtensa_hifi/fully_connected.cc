@@ -137,11 +137,48 @@ TfLiteStatus EvalQuantizedInt8(TfLiteContext* context, TfLiteNode* node,
   op_params.quantized_activation_min = data.output_activation_min;
   op_params.quantized_activation_max = data.output_activation_max;
 
+#ifdef NNLIB_HIFI5
+  if(op_params.weights_offset == 0)
+  {
+    int ret, b, weight_depth, out_depth, batches;
+    int8_t* p_out = GetTensorData<int8_t>(output);
+    weight_depth = GetTensorShape(filter).Dims(
+        GetTensorShape(filter).DimensionsCount() - 1);
+    out_depth = GetTensorShape(output).Dims(
+        GetTensorShape(output).DimensionsCount() - 1);
+    batches = FlatSizeSkipDim(GetTensorShape(output),
+                              GetTensorShape(output).DimensionsCount() - 1);
+
+    for (b = 0; b < batches; b++) {
+      ret = xa_nn_fully_connected_sym8sxasym8s_asym8s(
+          (GetTensorData<int8_t>(output) + b * out_depth),
+          GetTensorData<int8_t>(filter),
+          (GetTensorData<int8_t>(input) + b * weight_depth),
+          GetTensorData<int32_t>(bias), weight_depth, out_depth,
+          op_params.input_offset, op_params.output_multiplier,
+          op_params.output_shift, op_params.output_offset);
+
+      CHECK_ERR_HIFI_NNLIB_KER(
+          ret, "xa_nn_fully_connected_sym8sxasym8s_asym8s failed");
+    }
+
+    ret = xa_nn_vec_activation_min_max_8_8(p_out, p_out,
+                                           data.output_activation_min,
+                                           data.output_activation_max,
+                                           batches * out_depth);
+
+    CHECK_ERR_HIFI_NNLIB_KER(
+        ret, "xa_nn_vec_activation_min_max_8_8 failed");
+  }
+  else
+#endif
+  {
   reference_integer_ops::FullyConnected(
       op_params, GetTensorShape(input), GetTensorData<int8_t>(input),
       GetTensorShape(filter), GetTensorData<int8_t>(filter),
       GetTensorShape(bias), GetTensorData<int32_t>(bias),
       GetTensorShape(output), GetTensorData<int8_t>(output));
+  }
   return kTfLiteOk;
 }
 
@@ -223,7 +260,7 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
   tflite::FullyConnectedParams op_params;
   op_params.float_activation_min = output_activation_min;
   op_params.float_activation_max = output_activation_max;
-#if HIFI_VFPU
+#if HIFI_VFPU && !defined NNLIB_HIFI5
   int ret, b, weight_depth, out_depth, batches;
   weight_depth =
       GetTensorShape(filter).Dims(GetTensorShape(filter).DimensionsCount() - 1);

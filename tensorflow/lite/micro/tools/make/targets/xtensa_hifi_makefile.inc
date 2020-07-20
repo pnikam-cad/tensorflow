@@ -6,6 +6,7 @@ ifeq ($(TARGET), xtensa_hifi)
   TARGET_ARCH := hifi3_bd5
 
 $(eval $(call add_third_party_download,$(XTENSA_HIFI4_URL),$(XTENSA_HIFI4_MD5),xa_nnlib_hifi4,))
+$(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),xa_nnlib_hifi5,))
 
   PLATFORM_ARGS = \
     -mno-mul16 \
