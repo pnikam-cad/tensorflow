@@ -117,7 +117,7 @@ TfLiteStatus SoftmaxFloat(TfLiteContext* context, const TfLiteTensor* input,
       MatchingDim(input_shape, trailing_dim, output_shape, trailing_dim);
 
   ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-  float* p_scratch = (float*)xtensa_nnlib_scratch_buf;
+  float* p_scratch = reinterpret_cast<float*>(xtensa_nnlib_scratch_buf);
 
   if (depth * sizeof(float) > XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
     TF_LITE_KERNEL_LOG(context, "Softmax: insufficient scratch memory");
@@ -157,7 +157,7 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context, const TfLiteTensor* input,
         MatchingDim(input_shape, trailing_dim, output_shape, trailing_dim);
 
     ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    void* p_scratch = (void*)xtensa_nnlib_scratch_buf;
+    void* p_scratch = xtensa_nnlib_scratch_buf;
 
     if (get_softmax_scratch_size(PREC_ASYM8, PREC_ASYM8, depth) >
         XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
@@ -193,7 +193,7 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context, const TfLiteTensor* input,
           MatchingDim(input_shape, trailing_dim, output_shape, trailing_dim);
 
       ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-      char* p_scratch = xtensa_nnlib_scratch_buf;
+      void* p_scratch = xtensa_nnlib_scratch_buf;
 
       if (get_softmax_scratch_size(-4, -4, depth) >
           XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
@@ -205,7 +205,7 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context, const TfLiteTensor* input,
         int err = xa_nn_vec_softmax_asym8s_asym8s(
             &output_data[i * depth], &input_data[i * depth], op_data.diff_min,
             op_data.input_left_shift, op_data.input_multiplier, depth,
-            static_cast<void*>(p_scratch));
+            p_scratch);
         CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_softmax_asym8s_asym8s failed");
       }
 #endif
