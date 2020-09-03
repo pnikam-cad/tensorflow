@@ -230,10 +230,11 @@ inline TfLiteStatus EvalFloatSVDF(
       so only num_units size is guaranteed, so introduced rank loop and
       calling matXvec for num_units rows */
       for (int j = 0; j < rank; j++) {
-        err = xa_nn_matXvec_f32xf32_f32(
-            &out_scratch[j * num_units], &matrix[j * input_size * num_units],
-            NULL, &vector[i * input_size], NULL, bias_scratch, num_units,
-            input_size, 0, input_size, 0);
+        err = xa_nn_matXvec_f32xf32_f32(&out_scratch[j * num_units],
+                                        &matrix[j * input_size * num_units],
+                                        NULL, &vector[i * input_size],
+                                        NULL, bias_scratch, num_units,
+                                        input_size, 0, input_size, 0);
         CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_matXvec_f32xf32_f32 failed");
       }
       for (int j = 0; j < num_filters; ++j) {
@@ -263,9 +264,9 @@ inline TfLiteStatus EvalFloatSVDF(
       output_ptr);
 }
 
-void EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
+TfLiteStatus EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
                      const TfLiteTensor* input_tensor,
-    const TfLiteTensor* weights_feature_tensor,
+                     const TfLiteTensor* weights_feature_tensor,
                      const TfLiteTensor* weights_time_tensor,
                      const TfLiteTensor* bias_tensor,
                      const TfLiteSVDFParams* params,
@@ -292,17 +293,52 @@ void EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
 
   // Left shift the activation_state.
   {
-    int16_t* new_state_start = state_ptr;
-    const int16_t* old_state_start = state_ptr + 1;
-    const int16_t* old_state_end = state_ptr + n_batch * n_filter * n_memory;
-    while (old_state_start != old_state_end) {
-      *new_state_start++ = *old_state_start++;
+#ifdef NNLIB_HIFI5
+    ae_int16x8 *pDst = reinterpret_cast<ae_int16x8 *>(state_ptr);
+    ae_int16x8 *pSrc = reinterpret_cast<ae_int16x8 *>(state_ptr + 1);
+    ae_int16x4 d, d1;
+    ae_valignx2 valign1 = AE_LA128_PP(pSrc);
+    ae_valignx2 valign2 = AE_ZALIGN128();
+
+    int loopcnt = (n_batch * n_filter * n_memory - 1);
+
+    for(int cnt = 0; cnt < (loopcnt >> 3); cnt++) {
+      AE_LA16X4X2_IP(d, d1, valign1, pSrc);
+      AE_SA16X4X2_IP(d, d1, valign2, pDst);
     }
+    AE_SA128POS_FP(valign2, pDst);
+
+    for(int cnt1 = 0; cnt1 < (loopcnt & 0x7); cnt1++)
+    {
+      AE_L16_IP(d, (ae_int16 *)pSrc, 2);
+      AE_S16_0_IP(d, (ae_int16 *)pDst, 2);
+    }
+#else
+    ae_int16x4 *pDst = reinterpret_cast<ae_int16x4 *>(state_ptr);
+    ae_int16x4 *pSrc = reinterpret_cast<ae_int16x4 *>(state_ptr + 1);
+    ae_int16x4 d;
+    ae_valign valign1 = AE_LA64_PP(pSrc);
+    ae_valign valign2 = AE_ZALIGN64();
+
+    int loopcnt = (n_batch * n_filter * n_memory - 1);
+    for(int cnt = 0; cnt < (loopcnt >> 2); cnt++) {
+      AE_LA16X4_IP(d, valign1, pSrc);
+      AE_SA16X4_IP(d, valign2, pDst);
+    }
+    AE_SA64POS_FP(valign2, pDst);
+
+    for(int cnt1 = 0; cnt1 < (loopcnt & 0x3); cnt1++)
+    {
+      AE_L16_IP(d, (ae_int16 *)pSrc, 2);
+      AE_S16_0_IP(d, (ae_int16 *)pDst, 2);
+    }
+#endif
   }
 
   // Note: no need to clear the latest activation, matmul is not accumulative.
 
   // Feature matmul.
+#ifndef NNLIB_HIFI5
   {
     int16_t* state = GetTensorData<int16_t>(activation_state_tensor);
     const int8_t* input = GetTensorData<int8_t>(input_tensor);
@@ -333,7 +369,33 @@ void EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
       }
     }
   }
+#else
+  {
+    int16_t* state = GetTensorData<int16_t>(activation_state_tensor);
+    const int8_t* input = GetTensorData<int8_t>(input_tensor);
+    const int8_t* weight_feature =
+        GetTensorData<int8_t>(weights_feature_tensor);
+    int16_t* result_in_batch = state + (n_memory - 1);
+    int err = 0;
 
+    for (int b = 0; b < n_batch; b++) {
+      err = xa_nn_matXvec_out_stride_sym8sxasym8s_16(&result_in_batch[b*n_filter*n_memory],
+                                                     weight_feature,
+                                                     &input[b*n_input],
+                                                     NULL,
+                                                     n_filter,
+                                                     n_input,
+                                                     n_input,
+                                                     n_memory,
+                                                     -input_zp,
+                                                     (data.effective_scale_1_a),
+                                                     data.effective_scale_1_b);
+      CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_matXvec_sym8sxasym8s_16 failed");
+    }
+  }
+#endif
+
+#ifndef  NNLIB_HIFI5
   // Time.
   {
     for (int b = 0; b < n_batch; ++b) {
@@ -400,6 +462,32 @@ void EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
       GetTensorData<int8_t>(output_tensor)[i] = static_cast<int8_t>(x4);
     }
   }
+#else
+  {
+    for (int b = 0; b < n_batch; ++b) {
+      int8_t* output_ptr =
+          GetTensorData<int8_t>(output_tensor) + b * n_unit;
+
+      const int16_t* vector1_ptr = GetTensorData<int16_t>(weights_time_tensor);
+      const int16_t* vector2_ptr =
+          GetTensorData<int16_t>(activation_state_tensor) +
+          b * n_memory * n_filter;
+      int err = 0;
+      const int32_t *bias_ptr = GetTensorData<int32_t>(bias_tensor);
+      err = xa_nn_dot_prod_16x16_asym8s(output_ptr,
+                                        vector1_ptr,
+                                        vector2_ptr,
+                                        bias_ptr,
+                                        n_memory*n_rank,
+                                        (data.effective_scale_2_a),
+                                        data.effective_scale_2_b,
+                                        output_zp,
+                                        n_unit);
+      CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_dot_prod_16x16_asym8s failed");
+    }
+  }
+#endif
+  return kTfLiteOk;
 }
 
 }  // namespace
@@ -587,10 +675,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
     case kTfLiteInt8: {
         TF_LITE_ENSURE_EQ(context, params->activation, kTfLiteActRelu);
 
-      EvalIntegerSVDF(context, node, input, weights_feature, weights_time, bias,
+        return EvalIntegerSVDF(context, node, input, weights_feature, weights_time, bias,
                       params, activation_state, output, data,
                       input->params.zero_point, output->params.zero_point);
-        return kTfLiteOk;
       break;
     }
 

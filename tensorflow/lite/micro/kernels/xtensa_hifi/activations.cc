@@ -130,10 +130,17 @@ TfLiteStatus ReluEval(TfLiteContext* context, TfLiteNode* node) {
       return kTfLiteOk;
     }
     case kTfLiteInt8: {
-      ReluQuantized<int8_t>(input->params.zero_point, GetTensorShape(input),
-                            GetTensorData<int8_t>(input),
-                            GetTensorShape(output),
-                            GetTensorData<int8_t>(output));
+      int err;
+      const int length = MatchingFlatSize(GetTensorShape(input),
+                                          GetTensorShape(output));
+      err = xa_nn_vec_activation_min_max_8_8(GetTensorData<int8_t>(output),
+                                             GetTensorData<int8_t>(input),
+                                             input->params.zero_point,
+                                             std::numeric_limits<int8_t>::max(),
+                                             length);
+
+      CHECK_ERR_HIFI_NNLIB_KER(err,
+                               "Relu: xa_nn_vec_activation_min_max_8_8 failed");
       return kTfLiteOk;
     }
     case kTfLiteUInt8: {
@@ -198,10 +205,17 @@ TfLiteStatus Relu6Eval(TfLiteContext* context, TfLiteNode* node) {
       const int8_t six = FloatToAsymmetricQuantizedInt8(
           6.0f, input->params.scale, input->params.zero_point);
       const int8_t zero = input->params.zero_point;
-      Relu6Quantized<int8_t>(
-          zero, six, GetTensorShape(input), GetTensorData<int8_t>(input),
-          GetTensorShape(output), GetTensorData<int8_t>(output));
-      return kTfLiteOk;
+      int err;
+      const int length = MatchingFlatSize(GetTensorShape(input),
+                                          GetTensorShape(output));
+      err = xa_nn_vec_activation_min_max_8_8(GetTensorData<int8_t>(output),
+                                             GetTensorData<int8_t>(input),
+                                             zero,
+                                             six,
+                                             length);
+
+      CHECK_ERR_HIFI_NNLIB_KER(err,
+                               "Relu6: xa_nn_vec_activation_min_max_8_8 failed");
     }
     case kTfLiteUInt8: {
       const uint8_t six = FloatToAsymmetricQuantizedUInt8(

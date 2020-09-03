@@ -28,7 +28,7 @@ $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),x
   CXX_TOOL := clang++
   CC_TOOL := clang
 
-  CXXFLAGS = -O0 $(PLATFORM_ARGS) -std=c++11 $(TF_LITE_MICRO_FLAGS)
+  CXXFLAGS = -O3 $(PLATFORM_ARGS) -std=c++11 $(TF_LITE_MICRO_FLAGS)
   #TODO: Use -std=c11 ?
   CCFLAGS = -O3 $(PLATFORM_ARGS) $(TF_LITE_MICRO_FLAGS)
 

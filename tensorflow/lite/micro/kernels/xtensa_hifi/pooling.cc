@@ -262,29 +262,14 @@ TfLiteStatus AverageEvalQuantized(TfLiteContext* context,
     }
 
     out_length = batches * output_height * output_width * depth;
-    uint32 p_unalign_val = (uint32)out_data_ptr, p_align_val;
-    p_align_val = (p_unalign_val + 7) & (~7);
+    err = xa_nn_vec_activation_min_max_asym8_asym8(out_data_ptr, out_data_ptr,
+                                                   activation_min,
+                                                   activation_max, out_length);
 
-    // pre loop for activation_min_max
-    int pre_loop_count = p_align_val - p_unalign_val;
-    pre_loop_count = MIN(pre_loop_count, out_length);
+    CHECK_ERR_HIFI_NNLIB_KER(
+        err,
+        "AveragepoolAsym8: xa_nn_vec_activation_min_max_asym8_asym8 failed");
 
-    for (int i = 0; i < pre_loop_count; i++) {
-      ACTIVATION_MIN_MAX_ASYM8(out_data_ptr[i], out_data_ptr[i], activation_min,
-                               activation_max)
-    }
-
-    out_length = out_length - pre_loop_count;
-
-    if (out_length > 0) {
-      err = xa_nn_vec_activation_min_max_asym8_asym8(
-          out_data_ptr, out_data_ptr, activation_min, activation_max,
-          out_length);
-
-      CHECK_ERR_HIFI_NNLIB_KER(
-          err,
-          "AveragepoolAsym8: xa_nn_vec_activation_min_max_asym8_asym8 failed");
-    }
   } else {
     PoolParams op_params;
     op_params.stride_height = params->stride_height;
@@ -372,27 +357,12 @@ TfLiteStatus MaxEvalFloat(TfLiteContext* context, TfLiteNode* node,
   }
 
   out_length = batches * output_height * output_width * depth;
-  uint32 p_unalign_val = (uint32)out_data_ptr, p_align_val;
-  p_align_val = (p_unalign_val + 7) & (~7);
+  err = xa_nn_vec_activation_min_max_f32_f32(out_data_ptr, out_data_ptr,
+                                             activation_min,
+                                             activation_max, out_length);
 
-  // pre loop for activation_min_max
-  int pre_loop_count = p_align_val - p_unalign_val;
-  pre_loop_count = MIN(pre_loop_count, out_length);
-
-  for (int i = 0; i < pre_loop_count; i++) {
-    ACTIVATION_MIN_MAX(float, out_data_ptr[i], out_data_ptr[i], activation_min,
-                       activation_max)
-  }
-
-  out_length = out_length - pre_loop_count;
-
-  if (out_length > 0) {
-    err = xa_nn_vec_activation_min_max_f32_f32(
-        out_data_ptr, out_data_ptr, activation_min, activation_max, out_length);
-
-    CHECK_ERR_HIFI_NNLIB_KER(
-        err, "MaxpoolFloat: xa_nn_vec_activation_min_max_f32_f32 failed");
-  }
+  CHECK_ERR_HIFI_NNLIB_KER(
+      err, "MaxpoolFloat: xa_nn_vec_activation_min_max_f32_f32 failed");
 #else
   tflite::PoolParams op_params;
   op_params.stride_height = params->stride_height;
@@ -482,28 +452,13 @@ TfLiteStatus MaxEvalQuantized(TfLiteContext* context, TfLiteNode* node,
     }
 
     out_length = batches * output_height * output_width * depth;
-    uint32 p_unalign_val = (uint32)out_data_ptr, p_align_val;
-    p_align_val = (p_unalign_val + 7) & (~7);
+    err = xa_nn_vec_activation_min_max_asym8_asym8(
+        out_data_ptr, out_data_ptr, activation_min, activation_max,
+        out_length);
 
-    // pre loop for activation_min_max
-    int pre_loop_count = p_align_val - p_unalign_val;
-    pre_loop_count = MIN(pre_loop_count, out_length);
+    CHECK_ERR_HIFI_NNLIB_KER(
+        err, "MaxpoolAsym8: xa_nn_vec_activation_min_max_asym8_asym8 failed");
 
-    for (int i = 0; i < pre_loop_count; i++) {
-      ACTIVATION_MIN_MAX_ASYM8(out_data_ptr[i], out_data_ptr[i], activation_min,
-                               activation_max)
-    }
-
-    out_length = out_length - pre_loop_count;
-
-    if (out_length > 0) {
-      err = xa_nn_vec_activation_min_max_asym8_asym8(
-          out_data_ptr, out_data_ptr, activation_min, activation_max,
-          out_length);
-
-      CHECK_ERR_HIFI_NNLIB_KER(
-          err, "MaxpoolAsym8: xa_nn_vec_activation_min_max_asym8_asym8 failed");
-    }
   } else {
     tflite::PoolParams op_params;
     op_params.stride_height = params->stride_height;
