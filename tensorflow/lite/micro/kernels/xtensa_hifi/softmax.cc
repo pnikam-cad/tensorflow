@@ -93,15 +93,6 @@ TfLiteStatus CalculateSoftmaxParams(TfLiteContext* context,
 
 }  // namespace
 
-TfLiteStatus SoftmaxPrepare(TfLiteContext* context, TfLiteNode* node) {
-  TF_LITE_ENSURE_EQ(context, NumInputs(node), 1);
-  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
-  const TfLiteTensor* input = GetInput(context, node, 0);
-  TF_LITE_ENSURE(context, NumDimensions(input) >= 1);
-
-  return kTfLiteOk;
-}
-
 // Takes a tensor and performs softmax along the last dimension.
 TfLiteStatus SoftmaxFloat(TfLiteContext* context, const TfLiteTensor* input,
                           TfLiteTensor* output, const SoftmaxParams& op_data) {
@@ -250,23 +241,45 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context, const TfLiteTensor* input,
   return kTfLiteOk;
 }
 
-TfLiteStatus SoftmaxEval(TfLiteContext* context, TfLiteNode* node) {
+void* SoftmaxInit(TfLiteContext* context, const char* buffer, size_t length) {
+  TFLITE_DCHECK(context->AllocatePersistentBuffer != nullptr);
+  void* data = nullptr;
+  if (context->AllocatePersistentBuffer(context, sizeof(SoftmaxParams),
+                                        &data) == kTfLiteError) {
+    return nullptr;
+  }
+  return data;
+}
+
+TfLiteStatus SoftmaxPrepare(TfLiteContext* context, TfLiteNode* node) {
   auto* params = static_cast<TfLiteSoftmaxParams*>(node->builtin_data);
 
+  TF_LITE_ENSURE_EQ(context, NumInputs(node), 1);
+  TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
+  const TfLiteTensor* input = GetInput(context, node, 0);
+  TF_LITE_ENSURE(context, NumDimensions(input) >= 1);
+
+  TfLiteTensor* output = GetOutput(context, node, 0);
+
+  TFLITE_DCHECK(node->user_data != nullptr);
+  SoftmaxParams* data = static_cast<SoftmaxParams*>(node->user_data);
+  return CalculateSoftmaxParams(context, input, output, params, data);
+}
+
+TfLiteStatus SoftmaxEval(TfLiteContext* context, TfLiteNode* node) {
   const TfLiteTensor* input = GetInput(context, node, 0);
   TfLiteTensor* output = GetOutput(context, node, 0);
 
-  SoftmaxParams op_data;
-  TF_LITE_ENSURE_STATUS(
-      CalculateSoftmaxParams(context, input, output, params, &op_data));
+  TFLITE_DCHECK(node->user_data != nullptr);
+  SoftmaxParams* data = static_cast<SoftmaxParams*>(node->user_data);
 
   switch (input->type) {
     case kTfLiteFloat32: {
-      return SoftmaxFloat(context, input, output, op_data);
+      return SoftmaxFloat(context, input, output, *data);
     }
     case kTfLiteInt8:
     case kTfLiteUInt8: {
-      return SoftmaxQuantized(context, input, output, op_data);
+      return SoftmaxQuantized(context, input, output, *data);
     }
     default:
       TF_LITE_KERNEL_LOG(context, "Type %s (%d) not supported.",
@@ -277,7 +290,7 @@ TfLiteStatus SoftmaxEval(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace activations
 
 TfLiteRegistration Register_SOFTMAX() {
-  return {/*init=*/nullptr,
+  return {/*init=*/activations::SoftmaxInit,
           /*free=*/nullptr,
           /*prepare=*/activations::SoftmaxPrepare,
           /*invoke=*/activations::SoftmaxEval,
