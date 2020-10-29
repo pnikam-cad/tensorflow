@@ -239,17 +239,13 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
     const int filter_width = filter_shape.Dims(2);
     const int output_height = output_shape.Dims(1);
     const int output_width = output_shape.Dims(2);
-    const int filter_depth = filter_shape.Dims(3);
 
     int err, output_data_format = 0;
     uint8_t* p_scratch;
     uint8_t *p_filter;
     // Calculate filter_depth_padded as next near multiple of 4
-    int filter_depth_padded = (filter_depth + 3) & (~3);
     int out_length = output_height * output_width * output_depth;
-    int filter_size_padded = filter_height * filter_width * filter_depth_padded;
     int required_scratch, input_precision = PREC_ASYM8;
-    int h, c;
 
     if(filter_height == 1 && filter_width == 1)
     {
@@ -301,6 +297,9 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
       p_scratch = xtensa_nnlib_scratch_buf;
 
 #ifndef NNLIB_HIFI5
+      const int filter_depth = filter_shape.Dims(3);
+      int filter_depth_padded = (filter_depth + 3) & (~3);
+      int filter_size_padded = filter_height * filter_width * filter_depth_padded;
       p_filter = p_scratch;
       required_scratch += ALIGNED_SIZE((sizeof(uint8_t) * filter_size_padded * output_depth), 8);
       p_scratch += ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded * output_depth, 8);
@@ -312,12 +311,12 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
       }
 
       // Padding filter coefficients depthwise
-      for (h = 0; h < filter_height * filter_width * output_depth; h++) {
-        for (c = 0; c < filter_depth; c++) {
+      for (int h = 0; h < filter_height * filter_width * output_depth; h++) {
+        for (int c = 0; c < filter_depth; c++) {
           p_filter[h * filter_depth_padded + c] =
             filter_data[h * filter_depth + c];
         }
-        for (c = input_depth; c < filter_depth_padded; c++) {
+        for (int c = input_depth; c < filter_depth_padded; c++) {
           p_filter[h * filter_depth_padded + c] =
             -filter_offset;  // filter_depth[h*input_depth + c];
         }

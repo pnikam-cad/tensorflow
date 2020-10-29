@@ -21,16 +21,13 @@ $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),x
     -mtext-section-literals \
     -fno-unsafe-math-optimizations \
 
-  TF_LITE_MICRO_FLAGS = \
-    -DTF_LITE_STATIC_MEMORY\
 
   TARGET_TOOLCHAIN_PREFIX := xt-
   CXX_TOOL := clang++
   CC_TOOL := clang
 
-  CXXFLAGS = -O3 $(PLATFORM_ARGS) -std=c++11 $(TF_LITE_MICRO_FLAGS)
-  #TODO: Use -std=c11 ?
-  CCFLAGS = -O3 $(PLATFORM_ARGS) $(TF_LITE_MICRO_FLAGS)
+  CXXFLAGS += $(PLATFORM_ARGS)
+  CCFLAGS += $(PLATFORM_ARGS)
 
   TEST_SCRIPT := tensorflow/lite/micro/testing/test_xtensa_hifi_binary.sh
 

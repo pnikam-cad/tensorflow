@@ -283,17 +283,12 @@ TfLiteStatus EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
   TFLITE_DCHECK(context != nullptr);
   TFLITE_DCHECK(context->GetScratchBuffer != nullptr);
 
-  int32_t* scratch_tensor = static_cast<int32_t*>(
-      context->GetScratchBuffer(context, data.scratch_tensor_index));
-  int32_t* scratch_output_tensor = static_cast<int32_t*>(
-      context->GetScratchBuffer(context, data.scratch_output_tensor_index));
-
+#ifdef NNLIB_HIFI5
   // Shift states.
   int16_t* const state_ptr = GetTensorData<int16_t>(activation_state_tensor);
 
   // Left shift the activation_state.
   {
-#ifdef NNLIB_HIFI5
     ae_int16x8 *pDst = reinterpret_cast<ae_int16x8 *>(state_ptr);
     ae_int16x8 *pSrc = reinterpret_cast<ae_int16x8 *>(state_ptr + 1);
     ae_int16x4 d, d1;
@@ -313,7 +308,18 @@ TfLiteStatus EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
       AE_L16_IP(d, (ae_int16 *)pSrc, 2);
       AE_S16_0_IP(d, (ae_int16 *)pDst, 2);
     }
+  }
 #else
+  int32_t* scratch_tensor = static_cast<int32_t*>(
+      context->GetScratchBuffer(context, data.scratch_tensor_index));
+  int32_t* scratch_output_tensor = static_cast<int32_t*>(
+      context->GetScratchBuffer(context, data.scratch_output_tensor_index));
+
+  // Shift states.
+  int16_t* const state_ptr = GetTensorData<int16_t>(activation_state_tensor);
+
+  // Left shift the activation_state.
+  {
     ae_int16x4 *pDst = reinterpret_cast<ae_int16x4 *>(state_ptr);
     ae_int16x4 *pSrc = reinterpret_cast<ae_int16x4 *>(state_ptr + 1);
     ae_int16x4 d;
@@ -332,8 +338,8 @@ TfLiteStatus EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
       AE_L16_IP(d, (ae_int16 *)pSrc, 2);
       AE_S16_0_IP(d, (ae_int16 *)pDst, 2);
     }
-#endif
   }
+#endif
 
   // Note: no need to clear the latest activation, matmul is not accumulative.
 
