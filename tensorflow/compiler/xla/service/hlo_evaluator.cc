@@ -1573,9 +1573,9 @@ class OutputBatchIndexToInputIndex {
     int64 index_vector_dim = dim_numbers_.index_vector_dim();
     for (int64 i = 0, e = index_vector_.size(); i < e; i++) {
       index_vector_index_[index_vector_dim] = i;
-      // TODO(george): OK what should happen here?
-      // seems OK to crash though.
-      index_vector_[i] = *start_indices_.GetIntegralAsS64(index_vector_index_);
+      auto start_index = start_indices_.GetIntegralAsS64(index_vector_index_);
+      TF_RET_CHECK(start_index.has_value());
+      index_vector_[i] = *start_index;
     }
     return Status::OK();
   }
@@ -2484,6 +2484,23 @@ Status HloEvaluator::HandleReduce(HloInstruction* instr) {
                         evaluated_[reduce].ConvertToShape(reduce->shape()));
   }
   return Status::OK();
+}
+
+Status HloEvaluator::HandleReduceWindow(HloInstruction* hlo) {
+  // Here we delegate the handling to the typed visitor class, instantiated by
+  // using the type of the first input of ReduceWindow. The support for the
+  // variadic case inside the typed_visitor is made to not use the template
+  // parameter so it doesn't really matter which type is used to instantiate it
+  // here. We choose not to move the implementation for handle ReduceWindow
+  // from the typed visitor to here because we need to reuse the
+  // IterateThroughWindow method, which is defined and only avaiable inside the
+  // typed visitor.
+  if (hlo->shape().IsTuple()) {
+    return hlo->Visit(
+        typed_visitors_[hlo->shape().tuple_shapes(0).element_type()].get());
+  } else {
+    return DefaultAction(hlo);
+  }
 }
 
 Status HloEvaluator::HandleCustomCall(HloInstruction* custom_call) {

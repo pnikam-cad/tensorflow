@@ -191,10 +191,11 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace conv
 
 TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
-                   TfLiteConvParams* params, const OpData& data,
-                   const TfLiteTensor* input, const TfLiteTensor* filter,
-                   const TfLiteTensor* bias, TfLiteTensor* im2col,
-                   TfLiteTensor* hwcn_weights, TfLiteTensor* output) {
+                           TfLiteConvParams* params, const OpData& data,
+                           const TfLiteTensor* input,
+                           const TfLiteTensor* filter, const TfLiteTensor* bias,
+                           TfLiteTensor* im2col, TfLiteTensor* hwcn_weights,
+                           TfLiteTensor* output) {
   const int32_t input_offset = -input->params.zero_point;
   const int32_t filter_offset = -filter->params.zero_point;
   const int32_t output_offset = output->params.zero_point;
@@ -218,9 +219,9 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
     const int stride_height = params->stride_height;
     const int pad_width = data.padding.width;
     const int pad_height = data.padding.height;
-    const int32 output_activation_min = data.output_activation_min;
-    const int32 output_activation_max = data.output_activation_max;
-    const int32 output_multiplier = data.output_multiplier;
+    const int32_t output_activation_min = data.output_activation_min;
+    const int32_t output_activation_max = data.output_activation_max;
+    const int32_t output_multiplier = data.output_multiplier;
     const int output_shift = -data.output_shift;
     TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
     TFLITE_DCHECK_EQ(filter_shape.DimensionsCount(), 4);
@@ -242,7 +243,7 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
 
     int err, output_data_format = 0;
     uint8_t* p_scratch;
-    uint8_t *p_filter;
+    uint8_t* p_filter;
     // Calculate filter_depth_padded as next near multiple of 4
     int out_length = output_height * output_width * output_depth;
     int required_scratch, input_precision = PREC_ASYM8;
@@ -400,10 +401,10 @@ void EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
   reference_integer_ops::ConvPerChannel(
       op_params, data.per_channel_output_multiplier,
       data.per_channel_output_shift, GetTensorShape(input),
-      GetTensorData<int8>(input), GetTensorShape(filter),
-      GetTensorData<int8>(filter), GetTensorShape(bias),
-      GetTensorData<int32>(bias), GetTensorShape(output),
-      GetTensorData<int8>(output));
+      GetTensorData<int8_t>(input), GetTensorShape(filter),
+      GetTensorData<int8_t>(filter), GetTensorShape(bias),
+      GetTensorData<int32_t>(bias), GetTensorShape(output),
+      GetTensorData<int8_t>(output));
 }
 
 TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
@@ -454,7 +455,7 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     const int filter_depth = filter_shape.Dims(3);
     int err, output_data_format = 0;
     uint8_t* p_scratch;
-    float *p_filter;
+    float* p_filter;
     // Calculate filter_depth_padded as next near multiple of 2
     int filter_depth_padded = (filter_depth + 1) & (~1);
     int out_length = output_height * output_width * output_depth;
@@ -468,7 +469,7 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
 
     if (required_scratch <= 0) {
       TF_LITE_KERNEL_LOG(context,
-          "conv2d_std_f32: xa_nn_conv2d_std_getsize failed");
+                         "conv2d_std_f32: xa_nn_conv2d_std_getsize failed");
       return kTfLiteError;
     }
 
@@ -476,12 +477,14 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     p_scratch = xtensa_nnlib_scratch_buf;
 
     p_filter = reinterpret_cast<float*>(p_scratch);
-    p_scratch += ALIGNED_SIZE((sizeof(float) * filter_size_padded * output_depth), 8);
-    required_scratch += ALIGNED_SIZE((sizeof(float) * filter_size_padded * output_depth), 8);
+    p_scratch +=
+        ALIGNED_SIZE((sizeof(float) * filter_size_padded * output_depth), 8);
+    required_scratch +=
+        ALIGNED_SIZE((sizeof(float) * filter_size_padded * output_depth), 8);
 
     if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
       TF_LITE_KERNEL_LOG(context,
-          "conv2d_std_f32: insufficient scratch memory");
+                         "conv2d_std_f32: insufficient scratch memory");
       return kTfLiteError;
     }
 
@@ -489,7 +492,7 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     for (h = 0; h < filter_height * filter_width * output_depth; h++) {
       for (c = 0; c < filter_depth; c++) {
         p_filter[h * filter_depth_padded + c] =
-          filter_data[h * filter_depth + c];
+            filter_data[h * filter_depth + c];
       }
       for (c = input_depth; c < filter_depth_padded; c++) {
         p_filter[h * filter_depth_padded + c] = 0;
@@ -511,17 +514,14 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
       CHECK_ERR_HIFI_NNLIB_KER(
           err, "conv2d_std_f32: xa_nn_conv2d_std_f32xf32 failed");
 
-      err  = xa_nn_vec_activation_min_max_f32_f32(p_out_temp,
-                                                  p_out_temp,
-                                                  output_activation_min,
-                                                  output_activation_max,
-                                                  out_length);
+      err = xa_nn_vec_activation_min_max_f32_f32(
+          p_out_temp, p_out_temp, output_activation_min, output_activation_max,
+          out_length);
 
-      CHECK_ERR_HIFI_NNLIB_KER(
-          err, "xa_nn_vec_activation_min_max_f32_f32 failed");
+      CHECK_ERR_HIFI_NNLIB_KER(err,
+                               "xa_nn_vec_activation_min_max_f32_f32 failed");
     }
-  }
-  else
+  } else
 #endif /* HIFI_VFPU */
   {
     // TODO(b/154032858): Investigate removing extra copies.

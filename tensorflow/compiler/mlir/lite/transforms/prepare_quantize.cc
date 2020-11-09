@@ -23,10 +23,11 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "mlir/Dialect/Quant/QuantOps.h"  // from @llvm-project
+#include "mlir/IR/Function.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/PatternMatch.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 #include "tensorflow/compiler/mlir/lite/quantization/lite/tfl_to_std.h"
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_config.h"
@@ -68,6 +69,11 @@ namespace {
 // training quantization simpler.
 class PrepareQuantizePass
     : public PassWrapper<PrepareQuantizePass, FunctionPass> {
+  void getDependentDialects(DialectRegistry& registry) const override {
+    registry.insert<TFL::TensorFlowLiteDialect,
+                    ::mlir::quant::QuantizationDialect>();
+  }
+
  public:
   // Constructor used by the PassRegistration and enforce uint8 quantization.
   // This is only used by test.
@@ -107,8 +113,8 @@ class PrepareQuantizePass
   }
 
   // Get the min and max values from the quantization specification for the
-  // current function function and argument index. Uses default values if
-  // the function is specified in the `quantize_allowlist`.
+  // current function and argument index. Uses default values if the function
+  // is specified in the `quantize_allowlist`.
   std::pair<llvm::Optional<double>, llvm::Optional<double>>
   GetMinMaxValuesForArgument(llvm::StringRef func_name, int index) {
     if (func_name == quant_specs_.target_func) {
@@ -118,9 +124,13 @@ class PrepareQuantizePass
     }
   }
 
-  // Apply some sanity check and report some warnings for those don't follow
-  // the best quantization practise. This also fixes some simple violations.
+  // Apply some sanity check and report some warnings for those who don't follow
+  // the best quantization practice. This also fixes some simple violations.
   void SanityCheckAndAdjustment(FuncOp func);
+
+  // Whether the func contains Quantize ops. This is used to determine whether
+  // to use the quantization parameters from the fixed output range property.
+  bool ContainsQuantizeOps(FuncOp func);
 
   QuantizationSpecs quant_specs_;
 };
@@ -242,14 +252,14 @@ void PrepareQuantizePass::SanityCheckAndAdjustment(FuncOp func) {
   // Check for  (Quant (Dequant $in), $qA) "qdq" pairs that couldn't be
   // eliminated at this point.  This only occurs for the pattern
   //      (Quant (Dequant (Quant $in, $qB)), $qA)   $qB != $qA
-  // where the  qdq pair denotes a non-trivial requantiziion of an
-  // alreadyquantized value. Since this makes little sense (directly quantizing
-  // (Quant $in, $qA) would introduce less quantization noise) the likley cause
+  // where the  qdq pair denotes a non-trivial requantization of an
+  // already quantized value. Since this makes little sense (directly quantizing
+  // (Quant $in, $qA) would introduce less quantization noise) the likely cause
   // is an minor error in constructing the original network model that
   // introduced back-to-back Fake Quantization operations. Hence: emit a
-  // warning. N.b. at this point weŕe (teporarility) in the quantization dialect
-  // (presuambly enalbe re-use in xla etc) quant::*QuantizeCastOp weŕe matching
-  // here.
+  // warning. N.b. at this point we're (teporarility) in the quantization
+  // dialect (presumably enable re-use in xla etc) quant::*QuantizeCastOp
+  // we're matching here.
   //
   func.walk([&](quant::QuantizeCastOp q_op) {
     // If up with end up with
@@ -261,10 +271,10 @@ void PrepareQuantizePass::SanityCheckAndAdjustment(FuncOp func) {
     auto dq_arg = dq_op.getOperand();
 
     if (!dq_arg.hasOneUse()) {
-      // The initial quanization is used sompleace else ... so it might be
+      // The initial quantization is used someplace else ... so it might be
       // reasonable for it to requantized for another purpose.
-      // TODO: ideally would want to still check whether requanization narrows
-      // rather than widens the representation
+      // Ideally would want to still check whether requantization narrows
+      // rather than widens the representation.
       return;
     }
 
@@ -283,6 +293,13 @@ void PrepareQuantizePass::SanityCheckAndAdjustment(FuncOp func) {
         << " quantizer's output has another quantizer (" << q_op.getLoc()
         << ") as consumer - intentional?";
   });
+}
+
+bool PrepareQuantizePass::ContainsQuantizeOps(FuncOp func) {
+  for (const auto& op : func.getOps()) {
+    if (llvm::isa<quant::DequantizeCastOp>(op)) return true;
+  }
+  return false;
 }
 
 using PrepareQuantStats =
@@ -309,6 +326,7 @@ void PrepareQuantizePass::runOnFunction() {
   OwningRewritePatternList patterns;
   bool is_signed = quant_specs_.IsSignedInferenceType();
   int bit_width = quant_specs_.GetQuantizationTypeWidth();
+  bool enforce_fixed_output_range = ContainsQuantizeOps(func);
   if (is_signed) {
     patterns.insert<quant::ConvertUnsignedToSigned<quant::QuantizeCastOp>>(ctx);
     // Convert quant stats to int8 quantization parameters.
@@ -319,7 +337,7 @@ void PrepareQuantizePass::runOnFunction() {
     // Currently, only activation stats are imported, so narrow_range = false.
     patterns.insert<PrepareQuantStats>(bit_width, false, false, ctx);
   }
-  applyPatternsAndFoldGreedily(func, patterns);
+  applyPatternsAndFoldGreedily(func, std::move(patterns));
 
   SanityCheckAndAdjustment(func);
 
@@ -327,7 +345,8 @@ void PrepareQuantizePass::runOnFunction() {
   // values (tensors).
   ApplyQuantizationParamsPropagation(
       func, is_signed, disable_per_channel || quant_specs_.disable_per_channel,
-      GetOpQuantSpec);
+      GetOpQuantSpec,
+      enforce_fixed_output_range || quant_specs_.post_training_quantization);
 
   ConvertMlirQuantOpsToTFLQuantOps(func);
 }

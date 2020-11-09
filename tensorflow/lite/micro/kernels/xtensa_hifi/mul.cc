@@ -21,8 +21,8 @@ limitations under the License.
 #include "tensorflow/lite/kernels/internal/reference/process_broadcast_shapes.h"
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
-#include "tensorflow/lite/micro/memory_helpers.h"
 #include "tensorflow/lite/micro/kernels/xtensa_hifi/xtensa_tf_micro_common.h"
+#include "tensorflow/lite/micro/memory_helpers.h"
 
 namespace tflite {
 namespace ops {
@@ -80,9 +80,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
-                   TfLiteMulParams* params, OpData* data,
-                   const TfLiteTensor* input1, const TfLiteTensor* input2,
-                   TfLiteTensor* output) {
+                           TfLiteMulParams* params, OpData* data,
+                           const TfLiteTensor* input1,
+                           const TfLiteTensor* input2, TfLiteTensor* output) {
   if (output->type == kTfLiteInt8 || output->type == kTfLiteUInt8) {
     tflite::ArithmeticParams op_params;
     SetActivationParams(data->output_activation_min,
@@ -115,20 +115,16 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
         const RuntimeShape& input1_shape = GetTensorShape(input1);
         const RuntimeShape& input2_shape = GetTensorShape(input2);
         const RuntimeShape& output_shape = GetTensorShape(output);
-        const int flat_size = MatchingElementsSize(input1_shape, input2_shape,
-                                                   output_shape);
+        const int flat_size =
+            MatchingElementsSize(input1_shape, input2_shape, output_shape);
 
-        err = xa_nn_elm_mul_asym8xasym8_asym8(GetTensorData<uint8_t>(output),
-                                              op_params.output_offset,
-                                              op_params.output_shift,
-                                              op_params.output_multiplier,
-                                              op_params.quantized_activation_min,
-                                              op_params.quantized_activation_max,
-                                              GetTensorData<uint8_t>(input1) ,
-                                              op_params.input1_offset,
-                                              GetTensorData<uint8_t>(input2) ,
-                                              op_params.input2_offset,
-                                              flat_size);
+        err = xa_nn_elm_mul_asym8xasym8_asym8(
+            GetTensorData<uint8_t>(output), op_params.output_offset,
+            op_params.output_shift, op_params.output_multiplier,
+            op_params.quantized_activation_min,
+            op_params.quantized_activation_max, GetTensorData<uint8_t>(input1),
+            op_params.input1_offset, GetTensorData<uint8_t>(input2),
+            op_params.input2_offset, flat_size);
 
         CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_elm_mul_asym8xasym8_asym8 failed");
       }
@@ -139,9 +135,9 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
 }
 
 TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
-               TfLiteMulParams* params, OpData* data,
-               const TfLiteTensor* input1, const TfLiteTensor* input2,
-               TfLiteTensor* output) {
+                       TfLiteMulParams* params, OpData* data,
+                       const TfLiteTensor* input1, const TfLiteTensor* input2,
+                       TfLiteTensor* output) {
   float output_activation_min, output_activation_max;
   CalculateActivationRange(params->activation, &output_activation_min,
                            &output_activation_max);
@@ -164,23 +160,21 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     const RuntimeShape& input1_shape = GetTensorShape(input1);
     const RuntimeShape& input2_shape = GetTensorShape(input2);
     const RuntimeShape& output_shape = GetTensorShape(output);
-    const int flat_size = MatchingElementsSize(input1_shape, input2_shape,
-                                               output_shape);
+    const int flat_size =
+        MatchingElementsSize(input1_shape, input2_shape, output_shape);
 
     err = xa_nn_elm_mul_f32xf32_f32(GetTensorData<float>(output),
                                     GetTensorData<float>(input1),
-                                    GetTensorData<float>(input2),
-                                    flat_size);
+                                    GetTensorData<float>(input2), flat_size);
 
     CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_elm_mul_f32xf32_f32 failed");
 
-    err  = xa_nn_vec_activation_min_max_f32_f32(GetTensorData<float>(output),
-                                                GetTensorData<float>(output),
-                                                output_activation_min,
-                                                output_activation_max,
-                                                flat_size);
+    err = xa_nn_vec_activation_min_max_f32_f32(
+        GetTensorData<float>(output), GetTensorData<float>(output),
+        output_activation_min, output_activation_max, flat_size);
 
-    CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_activation_min_max_f32_f32 failed");
+    CHECK_ERR_HIFI_NNLIB_KER(err,
+                             "xa_nn_vec_activation_min_max_f32_f32 failed");
 #else
     TF_LITE_MUL(Mul);
 #endif /* HIFI_VFPU */
@@ -202,12 +196,12 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
   switch (input1->type) {
     case kTfLiteUInt8:
     case kTfLiteInt8:
-      TF_LITE_ENSURE_OK(context, EvalQuantized(context, node, params,
-                                              &data, input1, input2, output));
+      TF_LITE_ENSURE_OK(context, EvalQuantized(context, node, params, &data,
+                                               input1, input2, output));
       break;
     case kTfLiteFloat32:
-      TF_LITE_ENSURE_OK(context, EvalFloat(context, node, params,
-                                          &data, input1, input2, output));
+      TF_LITE_ENSURE_OK(context, EvalFloat(context, node, params, &data, input1,
+                                           input2, output));
       break;
     default:
       TF_LITE_KERNEL_LOG(context, "Type %s (%d) not supported.",
@@ -221,13 +215,13 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 
 TfLiteRegistration Register_MUL() {
   return {/*init=*/nullptr,
-                                 /*free=*/nullptr,
-                                 /*prepare=*/nullptr,
-                                 /*invoke=*/mul::Eval,
-                                 /*profiling_string=*/nullptr,
-                                 /*builtin_code=*/0,
-                                 /*custom_name=*/nullptr,
-                                 /*version=*/0};
+          /*free=*/nullptr,
+          /*prepare=*/nullptr,
+          /*invoke=*/mul::Eval,
+          /*profiling_string=*/nullptr,
+          /*builtin_code=*/0,
+          /*custom_name=*/nullptr,
+          /*version=*/0};
 }
 
 }  // namespace micro

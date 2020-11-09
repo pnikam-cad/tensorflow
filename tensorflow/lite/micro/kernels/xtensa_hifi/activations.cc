@@ -41,8 +41,8 @@ limitations under the License.
 #include "tensorflow/lite/kernels/internal/tensor_ctypes.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/kernels/op_macros.h"
-#include "tensorflow/lite/micro/micro_utils.h"
 #include "tensorflow/lite/micro/kernels/xtensa_hifi/xtensa_tf_micro_common.h"
+#include "tensorflow/lite/micro/micro_utils.h"
 
 namespace tflite {
 namespace ops {
@@ -155,12 +155,12 @@ TfLiteStatus ReluEval(TfLiteContext* context, TfLiteNode* node) {
       inp_data_ptr = GetTensorData<uint8_t>(input);
       out_data_ptr = GetTensorData<uint8_t>(output);
 
-      err = xa_nn_vec_activation_min_max_asym8_asym8(out_data_ptr, inp_data_ptr,
-                                                     zero,
-                                                     std::numeric_limits<uint8_t>::max(),
-                                                     flat_size);
+      err = xa_nn_vec_activation_min_max_asym8_asym8(
+          out_data_ptr, inp_data_ptr, zero, std::numeric_limits<uint8_t>::max(),
+          flat_size);
 
-      CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_activation_min_max_asym8_asym8 failed");
+      CHECK_ERR_HIFI_NNLIB_KER(
+          err, "xa_nn_vec_activation_min_max_asym8_asym8 failed");
       return kTfLiteOk;
     }
     default: {
@@ -234,7 +234,8 @@ TfLiteStatus Relu6Eval(TfLiteContext* context, TfLiteNode* node) {
       err = xa_nn_vec_activation_min_max_asym8_asym8(out_data_ptr, inp_data_ptr,
                                                      zero, six, flat_size);
 
-      CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_activation_min_max_asym8_asym8 failed");
+      CHECK_ERR_HIFI_NNLIB_KER(
+          err, "xa_nn_vec_activation_min_max_asym8_asym8 failed");
       return kTfLiteOk;
     }
     default: {

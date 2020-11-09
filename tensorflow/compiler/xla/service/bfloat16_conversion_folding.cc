@@ -18,6 +18,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "tensorflow/compiler/xla/service/dfs_hlo_visitor_with_default.h"
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
+#include "tensorflow/compiler/xla/service/hlo_dataflow_analysis.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/hlo_opcode.h"
 #include "tensorflow/compiler/xla/status_macros.h"
@@ -62,7 +63,7 @@ class BFloat16ConversionFoldingVisitor : public DfsHloVisitorWithDefault {
 
   // Folds the BF16 -> F32 conversion operand to the HLO.
   //
-  // Precondition: the operand is a F32 -> BF16 conversion.
+  // Precondition: the operand is a BF16 -> F32 conversion.
   Status FoldOperandConversion(HloInstruction* hlo, int64 operand_index);
 
   HloComputation* computation_;
@@ -159,19 +160,20 @@ Status BFloat16ConversionFoldingVisitor::TryFoldBF16Conversions(
 
 Status BFloat16ConversionFoldingVisitor::DefaultAction(HloInstruction* hlo) {
   // Do not fold BF16 conversions for instructions related to tuples, entry and
-  // exit of a computation, fusion, convert, side-effecting instructions and
-  // control flow.
-  if (hlo->opcode() == HloOpcode::kTuple ||            //
-      hlo->opcode() == HloOpcode::kGetTupleElement ||  //
-      hlo->opcode() == HloOpcode::kConstant ||         //
-      hlo->opcode() == HloOpcode::kParameter ||        //
-      hlo->opcode() == HloOpcode::kFusion ||           //
-      hlo->opcode() == HloOpcode::kBitcastConvert ||   //
-      hlo->opcode() == HloOpcode::kConvert ||          //
-      hlo->opcode() == HloOpcode::kCall ||             //
-      hlo->opcode() == HloOpcode::kCustomCall ||       //
-      hlo->opcode() == HloOpcode::kWhile ||            //
-      hlo->opcode() == HloOpcode::kConditional ||      //
+  // exit of a computation, fusion, convert, side-effecting instructions,
+  // in-place operations and control flow.
+  if (hlo->opcode() == HloOpcode::kTuple ||                      //
+      hlo->opcode() == HloOpcode::kGetTupleElement ||            //
+      hlo->opcode() == HloOpcode::kConstant ||                   //
+      hlo->opcode() == HloOpcode::kParameter ||                  //
+      hlo->opcode() == HloOpcode::kFusion ||                     //
+      hlo->opcode() == HloOpcode::kBitcastConvert ||             //
+      hlo->opcode() == HloOpcode::kConvert ||                    //
+      hlo->opcode() == HloOpcode::kCall ||                       //
+      hlo->opcode() == HloOpcode::kCustomCall ||                 //
+      hlo->opcode() == HloOpcode::kWhile ||                      //
+      hlo->opcode() == HloOpcode::kConditional ||                //
+      HloDataflowAnalysis::IsInPlaceOperation(hlo->opcode()) ||  //
       hlo->HasSideEffectNoRecurse()) {
     return Status::OK();
   }

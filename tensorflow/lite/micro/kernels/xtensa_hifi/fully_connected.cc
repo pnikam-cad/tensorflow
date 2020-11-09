@@ -228,11 +228,9 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
         CHECK_ERR_HIFI_NNLIB_KER(
             ret, "xa_nn_fully_connected_asym8xasym8_asym8 failed");
       }
-      ret = xa_nn_vec_activation_min_max_asym8_asym8(p_out,
-                                                     p_out,
-                                                     data.output_activation_min,
-                                                     data.output_activation_max,
-                                                     batches*out_depth);
+      ret = xa_nn_vec_activation_min_max_asym8_asym8(
+          p_out, p_out, data.output_activation_min, data.output_activation_max,
+          batches * out_depth);
 
       CHECK_ERR_HIFI_NNLIB_KER(
           ret, "xa_nn_vec_activation_min_max_asym8_asym8 failed");
@@ -278,14 +276,10 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     CHECK_ERR_HIFI_NNLIB_KER(ret, "xa_nn_fully_connected_f32 failed.");
   }
   float* p_out = GetTensorData<float>(output);
-  ret = xa_nn_vec_activation_min_max_f32_f32(p_out,
-                                             p_out,
-                                             output_activation_min,
-                                             output_activation_max,
-                                             batches*out_depth
-                                             );
-  CHECK_ERR_HIFI_NNLIB_KER(
-      ret, "xa_nn_vec_activation_min_max_f32_f32 failed");
+  ret = xa_nn_vec_activation_min_max_f32_f32(
+      p_out, p_out, output_activation_min, output_activation_max,
+      batches * out_depth);
+  CHECK_ERR_HIFI_NNLIB_KER(ret, "xa_nn_vec_activation_min_max_f32_f32 failed");
 #else
   tflite::reference_ops::FullyConnected(
       op_params, GetTensorShape(input), GetTensorData<float>(input),

@@ -142,7 +142,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   int filter_width = SizeOfDimension(filter, 2);
   int filter_height = SizeOfDimension(filter, 1);
 
-  // Per channel quantization is only needed for int8 inference. For other
+  // Per channel quantization is only needed for int8_t inference. For other
   // quantized types, only a single scale and zero point is needed.
   const int num_channels = filter->dims->data[kDepthwiseConvQuantizedDimension];
   // Dynimically allocate per-channel quantization parameters.
@@ -248,7 +248,7 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     required_scratch += ALIGNED_SIZE(sizeof(float) * filter_size_padded, 8);
     if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
       TF_LITE_KERNEL_LOG(context,
-          "DepthwiseConvFloat: insufficient scratch memory");
+                         "DepthwiseConvFloat: insufficient scratch memory");
       return kTfLiteError;
     }
 
@@ -258,7 +258,7 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     for (int h = 0; h < filter_height * filter_width; h++) {
       for (int c = 0; c < filter_depth; c++) {
         p_filter[h * filter_depth_padded + c] =
-          filter_data[h * filter_depth + c];
+            filter_data[h * filter_depth + c];
       }
       for (int c = filter_depth; c < filter_depth_padded; c++) {
         p_filter[h * filter_depth_padded + c] = 0;
@@ -283,14 +283,13 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     }
 
     int out_length = batches * output_height * output_width * output_depth;
-    err = xa_nn_vec_activation_min_max_f32_f32(output_data, output_data,
-                                               output_activation_min,
-                                               output_activation_max, out_length);
+    err = xa_nn_vec_activation_min_max_f32_f32(
+        output_data, output_data, output_activation_min, output_activation_max,
+        out_length);
 
-    CHECK_ERR_HIFI_NNLIB_KER(err,
-        "DepthwiseConvFloat: xa_nn_vec_activation_min_max_f32_f32 failed");
-  }
-  else
+    CHECK_ERR_HIFI_NNLIB_KER(
+        err, "DepthwiseConvFloat: xa_nn_vec_activation_min_max_f32_f32 failed");
+  } else
 #endif /* HIFI_VFPU */
   {
     tflite::DepthwiseParams op_params;
@@ -309,8 +308,8 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     tflite::reference_ops::DepthwiseConv(
         op_params, GetTensorShape(input), GetTensorData<float>(input),
         GetTensorShape(filter), GetTensorData<float>(filter),
-        GetTensorShape(bias), GetTensorData<float>(bias), GetTensorShape(output),
-        GetTensorData<float>(output));
+        GetTensorShape(bias), GetTensorData<float>(bias),
+        GetTensorShape(output), GetTensorData<float>(output));
   }
   return kTfLiteOk;
 }
@@ -437,18 +436,19 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
   reference_integer_ops::DepthwiseConvPerChannel(
       op_params, data->per_channel_output_multiplier,
       data->per_channel_output_shift, GetTensorShape(input),
-      GetTensorData<int8>(input), GetTensorShape(filter),
-      GetTensorData<int8>(filter), GetTensorShape(bias),
-      GetTensorData<int32>(bias), GetTensorShape(output),
-      GetTensorData<int8>(output));
+      GetTensorData<int8_t>(input), GetTensorShape(filter),
+      GetTensorData<int8_t>(filter), GetTensorShape(bias),
+      GetTensorData<int32_t>(bias), GetTensorShape(output),
+      GetTensorData<int8_t>(output));
 }
   return kTfLiteOk;
 }
 
 TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
-                   TfLiteDepthwiseConvParams* params, const OpData* data,
-                   const TfLiteTensor* input, const TfLiteTensor* filter,
-                   const TfLiteTensor* bias, TfLiteTensor* output) {
+                           TfLiteDepthwiseConvParams* params,
+                           const OpData* data, const TfLiteTensor* input,
+                           const TfLiteTensor* filter, const TfLiteTensor* bias,
+                           TfLiteTensor* output) {
   const int32_t input_offset = -input->params.zero_point;
   const int32_t filter_offset = -filter->params.zero_point;
   const int32_t output_offset = output->params.zero_point;
@@ -473,9 +473,9 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
     const int pad_width = data->padding.width;
     const int pad_height = data->padding.height;
     const int depth_multiplier = params->depth_multiplier;
-    const int32 output_activation_min = data->output_activation_min;
-    const int32 output_activation_max = data->output_activation_max;
-    const int32 output_multiplier = data->output_multiplier;
+    const int32_t output_activation_min = data->output_activation_min;
+    const int32_t output_activation_max = data->output_activation_max;
+    const int32_t output_multiplier = data->output_multiplier;
     // Legacy ops used mixed left and right shifts. Now all are +ve-means-left.
     const int output_shift = -data->output_shift;
     TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
@@ -523,7 +523,7 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
 
     if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
       TF_LITE_KERNEL_LOG(context,
-          "DepthwiseConvAsym8: insufficient scratch memory");
+                         "DepthwiseConvAsym8: insufficient scratch memory");
       return kTfLiteError;
     }
 
@@ -532,8 +532,10 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
     int pad_value = filter_depth_padded - filter_depth;
 
     for (int h = 0; h < filter_height * filter_width; h++) {
-      memcpy(&p_filter[h*filter_depth_padded], &filter_data[h*filter_depth], filter_depth);
-      memset(&p_filter[h*filter_depth_padded + filter_depth], -filter_offset, pad_value);
+      memcpy(&p_filter[h * filter_depth_padded], &filter_data[h * filter_depth],
+             filter_depth);
+      memset(&p_filter[h * filter_depth_padded + filter_depth], -filter_offset,
+             pad_value);
     }
 #else
     if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
@@ -560,11 +562,9 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
     }
 
     int out_length = batches * output_height * output_width * output_depth;
-    err = xa_nn_vec_activation_min_max_asym8_asym8(output_data,
-                                                   output_data,
-                                                   output_activation_min,
-                                                   output_activation_max,
-                                                   out_length);
+    err = xa_nn_vec_activation_min_max_asym8_asym8(
+        output_data, output_data, output_activation_min, output_activation_max,
+        out_length);
 
     CHECK_ERR_HIFI_NNLIB_KER(
         err,

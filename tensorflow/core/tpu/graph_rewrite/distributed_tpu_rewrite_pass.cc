@@ -64,9 +64,9 @@ limitations under the License.
 #include "tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass_internal.h"
 #include "tensorflow/core/tpu/graph_rewrite/host_training_loop_optimization_util.h"
 #include "tensorflow/core/tpu/graph_rewrite/incomplete_nodedef_builder.h"
-#include "tensorflow/core/tpu/kernels/tpu_util_c_api.h"
 #include "tensorflow/core/tpu/tpu_compile_interface.h"
 #include "tensorflow/core/tpu/tpu_defs.h"
+#include "tensorflow/core/tpu/tpu_ops_c_api.h"
 #include "tensorflow/core/util/device_name_utils.h"
 #include "tensorflow/core/util/dump_graph.h"
 #include "tensorflow/stream_executor/tpu/tpu_platform_interface.h"
@@ -90,13 +90,194 @@ const char kShardingAttribute[] = "_XlaSharding";
 const char kTPUPartitionedInput[] = "TPUPartitionedInput";
 const char kTPUPartitionedOutput[] = "TPUPartitionedOutput";
 
-// TODO(phawkins) add a canonical copy of these operator names and refactor
-// everything to use it.
-static const char* const kSendFromHostOp = "_XlaSendFromHost";
-static const char* const kRecvAtHostOp = "_XlaRecvAtHost";
-
 static const char* const kTPUCompilationResultAttr = "_tpu_compilation_status";
 static const char* const kPostDeviceRewriteAttr = "_post_device_rewrite";
+
+class IntrusiveHeapLink {
+ public:
+  using size_type = size_t;
+  static constexpr size_type kNotMember = -1;
+
+  IntrusiveHeapLink() = default;
+
+  // Only IntrusiveHeap and LinkAccess objects should make these objects.
+  explicit IntrusiveHeapLink(size_type pos) : pos_{pos} {}
+
+  // Only IntrusiveHeap and LinkAccess should get the value.
+  size_type get() const { return pos_; }
+
+ private:
+  size_type pos_{kNotMember};
+};
+
+template <typename T, IntrusiveHeapLink T::*M>
+struct IntrusiveHeapDataMemberLinkAccess {
+  IntrusiveHeapLink Get(const T* elem) const { return elem->*M; }
+  void Set(T* elem, IntrusiveHeapLink link) const { elem->*M = link; }
+};
+
+template <typename T>
+struct DefaultIntrusiveHeapLinkAccess {
+  IntrusiveHeapLink Get(const T* elem) const { return elem->heap; }
+  void Set(T* elem, IntrusiveHeapLink link) const { elem->heap = link; }
+};
+
+template <typename T, typename PtrCompare,
+          typename LinkAccess = DefaultIntrusiveHeapLinkAccess<T>,
+          typename Alloc = std::allocator<T*>>
+class IntrusiveHeap {
+ public:
+  typedef typename IntrusiveHeapLink::size_type size_type;
+  typedef T value_type;
+  typedef T* pointer;
+  typedef const T* const_pointer;
+  typedef PtrCompare pointer_compare_type;
+  typedef LinkAccess link_access_type;
+  typedef Alloc allocator_type;
+
+  explicit IntrusiveHeap(
+      const pointer_compare_type& comp = pointer_compare_type(),
+      const link_access_type& link_access = link_access_type(),
+      const allocator_type& alloc = allocator_type())
+      : rep_(comp, link_access, alloc) {}
+
+  size_type size() const { return heap().size(); }
+
+  bool empty() const { return heap().empty(); }
+
+  // Return the top element, but don't remove it.
+  pointer top() const {
+    DCHECK(!empty());
+    return heap()[0];
+  }
+
+  // Remove the top() pointer from the heap and return it.
+  pointer Pop() {
+    pointer t = top();
+    Remove(t);
+    return t;
+  }
+
+  // Insert 't' into the heap.
+  void Push(pointer t) {
+    SetPositionOf(t, heap().size());
+    heap().push_back(t);
+    FixHeapUp(t);
+  }
+
+  // Adjust the heap to accommodate changes in '*t'.
+  void Adjust(pointer t) {
+    DCHECK(Contains(t));
+    size_type h = GetPositionOf(t);
+    if (h != 0 && compare()(t, heap()[(h - 1) >> 1])) {
+      FixHeapUp(t);
+    } else {
+      FixHeapDown(t);
+    }
+  }
+
+  // Remove the specified pointer from the heap.
+  void Remove(pointer t) {
+    DCHECK(Contains(t));
+    size_type h = GetPositionOf(t);
+    SetPositionOf(t, IntrusiveHeapLink::kNotMember);
+    if (h == heap().size() - 1) {
+      // Fast path for removing from back of heap.
+      heap().pop_back();
+      return;
+    }
+    // Move the element from the back of the heap to overwrite 't'.
+    pointer& elem = heap()[h];
+    elem = heap().back();
+    SetPositionOf(elem, h);  // Element has moved, so update its link.
+    heap().pop_back();
+    Adjust(elem);  // Restore the heap invariant.
+  }
+
+  void Clear() { heap().clear(); }
+
+  bool Contains(const_pointer t) const {
+    size_type h = GetPositionOf(t);
+    return (h != IntrusiveHeapLink::kNotMember) && (h < size()) &&
+           heap()[h] == t;
+  }
+
+  void reserve(size_type n) { heap().reserve(n); }
+
+  size_type capacity() const { return heap().capacity(); }
+
+  allocator_type get_allocator() const { return rep_.heap_.get_allocator(); }
+
+ private:
+  typedef std::vector<pointer, allocator_type> heap_type;
+
+  // Empty base class optimization for pointer_compare and link_access.
+  // The heap_ data member retains a copy of the allocator, so it is not
+  // stored explicitly.
+  struct Rep : pointer_compare_type, link_access_type {
+    explicit Rep(const pointer_compare_type& cmp,
+                 const link_access_type& link_access,
+                 const allocator_type& alloc)
+        : pointer_compare_type(cmp),
+          link_access_type(link_access),
+          heap_(alloc) {}
+    heap_type heap_;  // NOLINT
+  };
+
+  const pointer_compare_type& compare() const { return rep_; }
+
+  const link_access_type& link_access() const { return rep_; }
+
+  const heap_type& heap() const { return rep_.heap_; }
+  heap_type& heap() { return rep_.heap_; }
+
+  size_type GetPositionOf(const_pointer t) const {
+    return link_access().Get(t).get();
+  }
+
+  void SetPositionOf(pointer t, size_type pos) const {
+    return link_access().Set(t, IntrusiveHeapLink(pos));
+  }
+
+  void FixHeapUp(pointer t) {
+    size_type h = GetPositionOf(t);
+    while (h != 0) {
+      size_type parent = (h - 1) >> 1;
+      if (compare()(heap()[parent], t)) {
+        break;
+      }
+      heap()[h] = heap()[parent];
+      SetPositionOf(heap()[h], h);
+      h = parent;
+    }
+    heap()[h] = t;
+    SetPositionOf(t, h);
+  }
+
+  void FixHeapDown(pointer t) {
+    size_type h = GetPositionOf(t);
+    for (;;) {
+      size_type kid = (h << 1) + 1;
+      if (kid >= heap().size()) {
+        break;
+      }
+      if (kid + 1 < heap().size() && compare()(heap()[kid + 1], heap()[kid])) {
+        ++kid;
+      }
+      if (compare()(t, heap()[kid])) {
+        break;
+      }
+      heap()[h] = heap()[kid];
+      SetPositionOf(heap()[h], h);
+      h = kid;
+    }
+
+    heap()[h] = t;
+    SetPositionOf(t, h);
+  }
+
+  Rep rep_;
+};
 
 string CoreDeviceLabel(int core) {
   return strings::StrCat("/device:", DEVICE_TPU_REPLICATED_CORE, ":", core);
@@ -124,15 +305,6 @@ Status SetNodeDeviceForTPUCommunication(DeviceNameUtils::ParsedName device,
 
   node->set_assigned_device_name(DeviceNameUtils::ParsedNameToString(device));
   return Status::OK();
-}
-
-Status SetNodeDeviceForTPUCommunication(const string& tpu_device_name,
-                                        const string& target_device_type,
-                                        Node* node) {
-  // Parse the TPU device.
-  DeviceNameUtils::ParsedName device;
-  TF_RET_CHECK(DeviceNameUtils::ParseFullName(tpu_device_name, &device));
-  return SetNodeDeviceForTPUCommunication(device, target_device_type, node);
 }
 
 // Iterate over the nodes in the original graph and find all the TPUReplicate
@@ -261,11 +433,10 @@ class TensorDevicePlacer {
         sizes_[i] = undefined_shape_size;
       }
     }
-    min_heap_.reserve(num_devices);
+
     for (int64 i = 0; i < num_devices; ++i) {
-      min_heap_.push_back(&index_nodes_[i]);
+      heap_.Push(&index_nodes_[i]);
     }
-    std::make_heap(min_heap_.begin(), min_heap_.end(), DeviceNodeCompare);
   }
 
   // Reports that the argument/return-value at index has been assigned
@@ -273,28 +444,32 @@ class TensorDevicePlacer {
   void ReportDeviceAssigned(int64 device, int64 index) {
     DeviceNode* node = &index_nodes_.at(device);
     node->size += sizes_.at(index);
-    std::make_heap(min_heap_.begin(), min_heap_.end(), DeviceNodeCompare);
+    heap_.Adjust(node);
   }
 
   // Retrieves the device at which the argument/return-value at index
   // should be assigned to.
   int64 RetrieveAssignment(int64 index) {
-    DeviceNode* node = *(min_heap_.begin());
+    DeviceNode* node = heap_.top();
     int64 device = node - index_nodes_.data();
     node->size += sizes_.at(index);
-    std::make_heap(min_heap_.begin(), min_heap_.end(), DeviceNodeCompare);
+    heap_.Adjust(node);
     return device;
   }
 
  private:
   struct DeviceNode {
+    struct Compare {
+      // Compare functor to implement a min heap using the ::gtl::IntrusiveHeap
+      // infrastructure.
+      bool operator()(const DeviceNode* lhs, const DeviceNode* rhs) const {
+        return lhs->size < rhs->size;
+      }
+    };
+
+    IntrusiveHeapLink heap;
     int64 size = 0;
   };
-
-  // std::push_heap, etc... creates a max-heap, but we want a min-heap.
-  static bool DeviceNodeCompare(const DeviceNode* lhs, const DeviceNode* rhs) {
-    return lhs->size > rhs->size;
-  }
 
   static int64 GetInferredShapeSize(const InferredShape& ishape,
                                     DataType dtype) {
@@ -304,7 +479,7 @@ class TensorDevicePlacer {
   }
 
   std::vector<DeviceNode> index_nodes_;
-  std::vector<DeviceNode*> min_heap_;
+  IntrusiveHeap<DeviceNode, typename DeviceNode::Compare> heap_;
   std::vector<int64> sizes_;
 };
 
@@ -424,8 +599,11 @@ Status GetStepMarkerLocation(const Node& replicate_node,
 // sharding attribute.
 Status GetDimensionIndicesAndNumSplitsFromSharding(
     const xla::OpSharding& sharding, std::map<int, int>* split_dimension_map) {
-  for (int dim_index = 0;
-       dim_index < sharding.tile_assignment_dimensions_size(); dim_index++) {
+  int64 tensor_tile_rank = sharding.tile_assignment_dimensions_size();
+  if (sharding.replicate_on_last_tile_dim()) {
+    tensor_tile_rank--;
+  }
+  for (int dim_index = 0; dim_index < tensor_tile_rank; dim_index++) {
     if (sharding.tile_assignment_dimensions(dim_index) > 1) {
       split_dimension_map->emplace(
           dim_index, sharding.tile_assignment_dimensions(dim_index));
@@ -510,6 +688,7 @@ xla::StatusOr<Node*> CreateSplitNode(int num_splits, int dim,
   split_def.add_input(absl::StrCat(split_dim_node->name(), ":0"));
   split_def.add_input(absl::StrCat(orig_src->name(), ":", orig_src_output));
   Node* split_node = graph->AddNode(split_def, &s);
+  split_node->set_assigned_device_name(input_assigned_device);
   TF_RETURN_IF_ERROR(s);
 
   graph->AddEdge(split_dim_node, 0, split_node, 0);
@@ -601,8 +780,9 @@ xla::StatusOr<ShardedInputInfo> CreateOrGetSplitNodesForInputSharding(
   // `split_nodes_for_dimension` now includes final split nodes
   // from which sharded data will be fed into TPUExcute nodes -- sorted by
   // row major order.
-  std::vector<NodeOut> sharded_inputs_list;
-  sharded_inputs_list.reserve(split_nodes_for_dimension.size());
+  std::vector<NodeOut> sharded_inputs_list(
+      sharding.tile_assignment_devices_size());
+  int64 next_core_tile_index = 0;
   while (!split_nodes_for_dimension.empty()) {
     Node* split_node = split_nodes_for_dimension.front();
     split_nodes_for_dimension.pop();
@@ -610,7 +790,14 @@ xla::StatusOr<ShardedInputInfo> CreateOrGetSplitNodesForInputSharding(
     TF_RETURN_IF_ERROR(
         GetNodeAttr(split_node->def(), "num_split", &num_splits));
     for (int out_index = 0; out_index < num_splits; ++out_index) {
-      sharded_inputs_list.emplace_back(NodeOut{split_node, out_index});
+      int64 repeat_count = sharding.replicate_on_last_tile_dim()
+                               ? *sharding.tile_assignment_dimensions().rbegin()
+                               : 1;
+      for (int64 i = 0; i < repeat_count; ++i) {
+        int64 next_core =
+            sharding.tile_assignment_devices(next_core_tile_index++);
+        sharded_inputs_list[next_core] = NodeOut{split_node, out_index};
+      }
     }
   }
 
@@ -713,19 +900,6 @@ xla::StatusOr<Node*> CreateConcatNodesForRetval(
   return inputs_to_sharded_retval.at(0).node;
 }
 
-absl::optional<int> GetCoreIndexInSharding(const xla::OpSharding& sharding,
-                                           int64 core) {
-  absl::optional<int> output_index;
-  for (int i = 0; i < sharding.tile_assignment_devices_size(); i++) {
-    int64 assigned_core = sharding.tile_assignment_devices(i);
-    if (assigned_core == core) {
-      output_index = i;
-      break;
-    }
-  }
-  return output_index;
-}
-
 // Set the padding ops the same devices as the original inputs. If the original
 // inputs are on TPUs, the padding ops will be placed on TPUs and XLA on demand
 // mode will be triggered, so we don't need to copy the data back to the host
@@ -787,7 +961,7 @@ bool IsTpuDevice(const string& device_string) {
 const absl::flat_hash_set<std::string>& PlaceOnTPUOpList() {
   static const auto place_on_tpu_ops = new absl::flat_hash_set<std::string>(
       {"Identity", "IdentityN", "Enter", "Exit", "Switch", "Merge",
-       "NextIteration", "Shape"});
+       "NextIteration", "Shape", "_Retval"});
   return *place_on_tpu_ops;
 }
 
@@ -1394,7 +1568,8 @@ Status DistributedTPURewritePass::GetArgAndRetvalShapes(
     arg_shape.shape = TensorShape();  // Variables are always scalars.
     arg_shape.handle_shape = info->handle_shape;
     arg_shape.handle_type = info->handle_type;
-    TF_RET_CHECK(arg_shape.handle_type != DT_INVALID);
+    TF_RET_CHECK(arg_shape.handle_type != DT_INVALID)
+        << " input edge: " << input_edges[edge_pos]->DebugString();
     ++edge_pos;
   }
 
@@ -1518,8 +1693,10 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
     const DataTypeVector& retval_types,
     const std::vector<InferredShape>& retval_shapes, const Graph& graph,
     const Node* replicate_node, FunctionLibraryRuntime* flr,
+    bool allow_parameter_replication_for_spmd,
     std::vector<xla::OpSharding>* arg_sharding, std::vector<bool>* arg_fast_mem,
-    std::vector<xla::OpSharding>* retval_sharding) {
+    std::vector<xla::OpSharding>* retval_sharding,
+    std::vector<std::string>* arg_names) {
   // Builds vectors of the argument and return nodes.
   std::vector<Node*> args(arg_types.size());
   std::vector<Node*> retvals(retval_types.size());
@@ -1569,10 +1746,12 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
   TensorDevicePlacer args_device_selector(num_cores_per_replica, arg_types,
                                           arg_shapes);
   arg_sharding->resize(args.size());
+  arg_names->resize(args.size());
   arg_fast_mem->resize(args.size());
   CachedFunctionHandles cached_function_handles(flr);
-  const bool use_spmd = UseSpmdForXlaPartitioning(replicate_node) ||
-                        replicate_inputs_outputs_by_default_for_xla_spmd_;
+  const bool use_spmd = (UseSpmdForXlaPartitioning(replicate_node) ||
+                         replicate_inputs_outputs_by_default_for_xla_spmd_) &&
+                        allow_parameter_replication_for_spmd;
   for (int i = 0; i < args.size(); ++i) {
     const Node* n = args[i];
     absl::optional<int64> assigned_core;
@@ -1634,7 +1813,8 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
     } else if (sharding->type() != xla::OpSharding::REPLICATED &&
                sharding->type() != xla::OpSharding::OTHER) {
       return tensorflow::errors::InvalidArgument(
-          "Unsupported argument sharding: ", sharding->DebugString());
+          "Unsupported argument sharding (for arg ", n->DebugString(),
+          "): ", sharding->DebugString());
     }
     if (assigned_core.has_value()) {
       args_device_selector.ReportDeviceAssigned(*assigned_core, i);
@@ -1657,6 +1837,7 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
     }
     (*arg_sharding)[i] = *sharding;
     (*arg_fast_mem)[i] = is_fast_mem;
+    (*arg_names)[i] = n->name();
     if (is_fast_mem) {
       VLOG(3) << "Add " << TPU_FAST_MEM_ATTR << " attribute to "
               << args[i]->name();
@@ -1675,7 +1856,7 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
 
     TF_ASSIGN_OR_RETURN(
         absl::optional<xla::OpSharding> sharding,
-        ParseShardingFromDevice(*edge->src(), num_cores_per_replica));
+        ParseShardingFromEdgeSource(*edge, num_cores_per_replica));
 
     if (partitioned_output_nodes.contains(i)) {
       Node* output_node = partitioned_output_nodes[i];
@@ -1703,7 +1884,9 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
       } else if (sharding.value().type() != xla::OpSharding::REPLICATED &&
                  sharding.value().type() != xla::OpSharding::OTHER) {
         return tensorflow::errors::InvalidArgument(
-            "Unsupported argument sharding: ", sharding->DebugString());
+            "Unsupported argument sharding for retval ",
+            retvals[i]->DebugString(), " edge=", edge->DebugString(), ": ",
+            sharding->DebugString());
       }
     } else {
       if (use_spmd) {
@@ -1739,6 +1922,23 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
     }
     retvals[i]->AddAttr(kShardingAttribute, sharding->SerializeAsString());
     (*retval_sharding)[i] = *sharding;
+  }
+  if (use_spmd &&
+      (absl::c_any_of(*arg_sharding,
+                      [](const xla::OpSharding& s) {
+                        return s.type() == xla::OpSharding::MAXIMAL;
+                      }) ||
+       absl::c_any_of(*retval_sharding, [](const xla::OpSharding& s) {
+         return s.type() == xla::OpSharding::MAXIMAL;
+       }))) {
+    LOG(WARNING) << "XLA SPMD only supports cases where all inputs/outputs "
+                    "exist on every partition (sharded or replicated). Fall "
+                    "back to MPMD.";
+    return AssignArgsAndRetvalsToCores(
+        num_cores_per_replica, params_info, arg_types, arg_shapes, retval_types,
+        retval_shapes, graph, replicate_node, flr,
+        /*allow_parameter_replication_for_spmd=*/false, arg_sharding,
+        arg_fast_mem, retval_sharding, arg_names);
   }
   return Status::OK();
 }
@@ -1825,6 +2025,7 @@ Status DistributedTPURewritePass::BuildCompileNode(
     const string& session_handle,
     const std::vector<xla::OpSharding>& arg_sharding,
     const std::vector<bool>& arg_fast_mem,
+    const std::vector<std::string>& arg_names,
     const std::vector<xla::OpSharding>& retval_sharding,
     int num_cores_per_replica, const string& compile_device,
     const xla::DeviceAssignment* xla_device_assignment,
@@ -1838,7 +2039,15 @@ Status DistributedTPURewritePass::BuildCompileNode(
   proto.set_function_library_fingerprint(library_fingerprint);
   proto.set_enable_automatic_model_parallelism(
       enable_cross_replica_sharding_mirrored_variables_);
-  const bool use_spmd = UseSpmdForXlaPartitioning(replicate_node);
+  const bool use_spmd =
+      UseSpmdForXlaPartitioning(replicate_node) && allow_xla_spmd_partition_ &&
+      !absl::c_any_of(arg_sharding,
+                      [](const xla::OpSharding& s) {
+                        return s.type() == xla::OpSharding::MAXIMAL;
+                      }) &&
+      !absl::c_any_of(retval_sharding, [](const xla::OpSharding& s) {
+        return s.type() == xla::OpSharding::MAXIMAL;
+      });
   proto.set_use_spmd_for_xla_partitioning(use_spmd);
 
   // Get and fill padding map.
@@ -1866,6 +2075,7 @@ Status DistributedTPURewritePass::BuildCompileNode(
     tpu::TPUCompileMetadataProto::Arg* arg = proto.add_args();
     DataType type = arg_types[i];
     const InferredShape& arg_shape = arg_shapes[i];
+    arg->set_name(arg_names[i]);
     if (type == DT_RESOURCE) {
       TF_RET_CHECK(arg_shape.handle_type != DT_INVALID) << i;
       arg->set_dtype(arg_shape.handle_type);
@@ -2265,7 +2475,8 @@ xla::StatusOr<NodeOut> CreateOrGetPerHostVariableCopy(
 
 Status DistributedTPURewritePass::BuildExecuteNodes(
     const ParameterInfo& params_info, int num_tasks, int num_cores_per_replica,
-    const Node& replicate_node, const DataTypeVector& arg_types,
+    const Node& replicate_node, const std::vector<std::string>& arg_names,
+    const DataTypeVector& arg_types,
     const std::vector<InferredShape>& arg_shapes,
     const DataTypeVector& retval_types,
     const std::vector<xla::OpSharding>& arg_shardings,
@@ -2388,7 +2599,9 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
       }
     } else {
       return tensorflow::errors::InvalidArgument(
-          "Unsupported argument sharding: ", sharding.DebugString());
+          "Unsupported argument sharding for arg=", arg_names[i],
+          " shape=", arg_shapes[i].shape.DebugString(), ": ",
+          sharding.DebugString());
     }
   }
   std::vector<std::vector<int>> core_retval_nums(num_cores_per_replica);
@@ -2549,14 +2762,8 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
                       sharding, orig_arg_num, dtype, replica,
                       edge->src_output(), edge->src(), control_predecessor,
                       graph, &input_index_to_sharded_inputs));
-
-              // Calculate which output we should receive from the Split node.
-              absl::optional<int> output_index =
-                  GetCoreIndexInSharding(sharding, core);
-              TF_RET_CHECK(output_index);
-
               NodeOut split_node_and_index =
-                  sharded_input_info.sharded_inputs.at(output_index.value());
+                  sharded_input_info.sharded_inputs.at(core);
               // Connect with Split node output.
               graph->AddEdge(split_node_and_index.node,
                              split_node_and_index.index, node, i);
@@ -2636,13 +2843,8 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
                       arg_shapes[orig_arg_num].handle_type, replica,
                       var_data.index, var_data.node, control_predecessor, graph,
                       &input_index_to_sharded_inputs));
-
-              // Calculate which output we should receive from the Split node.
-              absl::optional<int> output_index =
-                  GetCoreIndexInSharding(sharding, core);
-              TF_RET_CHECK(output_index);
               NodeOut split_node_and_index =
-                  sharded_input_info.sharded_inputs[output_index.value()];
+                  sharded_input_info.sharded_inputs[core];
               // Connect with Split node output.
               graph->AddEdge(split_node_and_index.node,
                              split_node_and_index.index, node, i);
@@ -2705,7 +2907,16 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
 
           // Add a Concat node.
           std::vector<NodeOut> orig_inputs;
-          for (int64 core_id : sharding.tile_assignment_devices()) {
+          for (int64 tile_index = 0;
+               tile_index < sharding.tile_assignment_devices_size();
+               ++tile_index) {
+            int64 last_tile_dim_size =
+                *sharding.tile_assignment_dimensions().rbegin();
+            if (sharding.replicate_on_last_tile_dim() &&
+                tile_index % last_tile_dim_size != 0) {
+              continue;
+            }
+            int64 core_id = sharding.tile_assignment_devices(tile_index);
             int core_retval_index =
                 retval_index_to_output_index_mapping[retval_index][core_id];
             orig_inputs.push_back(
@@ -2773,7 +2984,16 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
 
             // Add a Concat node.
             std::vector<NodeOut> orig_inputs;
-            for (int64 core_id : sharding.tile_assignment_devices()) {
+            for (int64 tile_index = 0;
+                 tile_index < sharding.tile_assignment_devices_size();
+                 ++tile_index) {
+              int64 last_tile_dim_size =
+                  *sharding.tile_assignment_dimensions().rbegin();
+              if (sharding.replicate_on_last_tile_dim() &&
+                  tile_index % last_tile_dim_size != 0) {
+                continue;
+              }
+              int64 core_id = sharding.tile_assignment_devices(tile_index);
               int core_retval_num =
                   orig_arg_num_to_output_index_mapping[orig_arg_num][core_id];
               orig_inputs.push_back(
@@ -3314,7 +3534,11 @@ DistributedTPURewritePass::LowerOutsideCompilationFunctionalNodes(
   // topology proto being leaked to cloud TPU users (e.g. through GetStatus
   // calls); this may be okay, but to be conservative, just assume that the
   // master session has the proper flags set.
-  auto* tpu_platform = tpu::TpuPlatformInterface::GetRegisteredPlatform();
+
+  // We do not initialize platform right now, but we can still retrieve the
+  // TPU topology even with an uninitialized platform.
+  auto* tpu_platform = tpu::TpuPlatformInterface::GetRegisteredPlatform(
+      /*initialize_platform=*/false);
   TF_RET_CHECK(tpu_platform);
   tpu::TpuTopologyExternal tpu_topology(tpu_platform->GetTopologyPtr());
   TF_RET_CHECK(num_tpus_per_task ==
@@ -3633,11 +3857,13 @@ Status DistributedTPURewritePass::FingerprintFunctionLibrary(
 
   std::vector<xla::OpSharding> arg_sharding;
   std::vector<bool> arg_fast_mem;
+  std::vector<std::string> arg_names;
   std::vector<xla::OpSharding> retval_sharding;
   TF_RETURN_IF_ERROR(AssignArgsAndRetvalsToCores(
       num_cores_per_replica, params_info, arg_types, arg_shapes, retval_types,
-      retval_shapes, *computation, replicate_node, flr, &arg_sharding,
-      &arg_fast_mem, &retval_sharding));
+      retval_shapes, *computation, replicate_node, flr,
+      allow_xla_spmd_partition_, &arg_sharding, &arg_fast_mem, &retval_sharding,
+      &arg_names));
 
   VLOG(1) << DumpGraphToFile("distributed_tpu_graph_to_replicate", *computation,
                              flib_def);
@@ -3695,7 +3921,7 @@ Status DistributedTPURewritePass::FingerprintFunctionLibrary(
   TF_RETURN_IF_ERROR(BuildCompileNode(
       replicate_node, *function, library_fingerprint, params_info, arg_shapes,
       arg_types, guaranteed_constant_nodes, session_handle, arg_sharding,
-      arg_fast_mem, retval_sharding, num_cores_per_replica,
+      arg_fast_mem, arg_names, retval_sharding, num_cores_per_replica,
       /*compile_device=*/tpu_compilation_device, xla_device_assignment.get(),
       dynamic_shape_nodes, graph, &compile_node, autotuner_thresh));
 
@@ -3709,8 +3935,8 @@ Status DistributedTPURewritePass::FingerprintFunctionLibrary(
 
   std::vector<VariableWrite> variable_writes;
   TF_RETURN_IF_ERROR(BuildExecuteNodes(
-      params_info, num_tasks, num_cores_per_replica, *replicate_node, arg_types,
-      arg_shapes, retval_types, arg_sharding, retval_sharding,
+      params_info, num_tasks, num_cores_per_replica, *replicate_node, arg_names,
+      arg_types, arg_shapes, retval_types, arg_sharding, retval_sharding,
       tf_device_assignment, compile_node, variable_reads,
       control_after_compilation, control_after, &variable_writes, graph));
   bool contains_resource_write_op =
@@ -3905,6 +4131,7 @@ Status DistributedTPURewritePass::Run(
 }
 
 bool DistributedTPURewritePass::distribute_vars_ = false;
+bool DistributedTPURewritePass::allow_xla_spmd_partition_ = true;
 bool DistributedTPURewritePass::
     replicate_inputs_outputs_by_default_for_xla_spmd_ = false;
 bool DistributedTPURewritePass::
@@ -3912,10 +4139,12 @@ bool DistributedTPURewritePass::
 bool DistributedTPURewritePass::enable_automatic_model_parallelism_ = false;
 
 /*static*/ void DistributedTPURewritePass::SetDistributedTpuRewritePassOptions(
-    bool distribute_vars, bool replicate_inputs_outputs_by_default_for_xla_spmd,
+    bool distribute_vars, bool allow_xla_spmd_partition,
+    bool replicate_inputs_outputs_by_default_for_xla_spmd,
     bool enable_cross_replica_sharding_mirrored_variables,
     bool enable_automatic_model_parallelism) {
   distribute_vars_ = distribute_vars;
+  allow_xla_spmd_partition_ = allow_xla_spmd_partition;
   replicate_inputs_outputs_by_default_for_xla_spmd_ =
       replicate_inputs_outputs_by_default_for_xla_spmd;
   enable_cross_replica_sharding_mirrored_variables_ =

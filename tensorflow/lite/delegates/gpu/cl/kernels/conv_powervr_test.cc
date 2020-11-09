@@ -20,8 +20,6 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "tensorflow/lite/delegates/gpu/cl/kernels/cl_test.h"
-#include "tensorflow/lite/delegates/gpu/cl/precision.h"
-#include "tensorflow/lite/delegates/gpu/cl/tensor_type.h"
 #include "tensorflow/lite/delegates/gpu/common/operations.h"
 #include "tensorflow/lite/delegates/gpu/common/status.h"
 
@@ -57,8 +55,8 @@ TEST_F(OpenCLOperationTest, ConvPowerVR1x1SimpleWeights) {
       op_def.src_tensors.push_back({data_type, storage, Layout::HWC});
       op_def.dst_tensors.push_back({data_type, storage, Layout::HWC});
       TensorFloat32 dst_tensor;
-      ConvPowerVR operation;
-      ASSERT_OK(CreateConvPowerVR(creation_context_, op_def, attr, &operation));
+      ConvPowerVR operation =
+          CreateConvPowerVR(creation_context_.GetDeviceInfo(), op_def, attr);
       ASSERT_OK(ExecuteGPUOperation(src_tensor, creation_context_, &operation,
                                     BHWC(1, 2, 2, 2), &dst_tensor));
       EXPECT_THAT(dst_tensor.data,
@@ -92,8 +90,8 @@ TEST_F(OpenCLOperationTest, ConvPowerVR1x1) {
       op_def.src_tensors.push_back({data_type, storage, Layout::HWC});
       op_def.dst_tensors.push_back({data_type, storage, Layout::HWC});
       TensorFloat32 dst_tensor;
-      ConvPowerVR operation;
-      ASSERT_OK(CreateConvPowerVR(creation_context_, op_def, attr, &operation));
+      ConvPowerVR operation =
+          CreateConvPowerVR(creation_context_.GetDeviceInfo(), op_def, attr);
       ASSERT_OK(ExecuteGPUOperation(src_tensor, creation_context_, &operation,
                                     BHWC(1, 2, 2, 2), &dst_tensor));
       EXPECT_THAT(dst_tensor.data,
@@ -127,8 +125,8 @@ TEST_F(OpenCLOperationTest, ConvPowerVRSimpleWeights) {
       op_def.src_tensors.push_back({data_type, storage, Layout::HWC});
       op_def.dst_tensors.push_back({data_type, storage, Layout::HWC});
       TensorFloat32 dst_tensor;
-      ConvPowerVR operation;
-      ASSERT_OK(CreateConvPowerVR(creation_context_, op_def, attr, &operation));
+      ConvPowerVR operation =
+          CreateConvPowerVR(creation_context_.GetDeviceInfo(), op_def, attr);
       ASSERT_OK(ExecuteGPUOperation(src_tensor, creation_context_, &operation,
                                     BHWC(1, 2, 2, 1), &dst_tensor));
       EXPECT_THAT(dst_tensor.data,
@@ -162,8 +160,8 @@ TEST_F(OpenCLOperationTest, ConvPowerVR) {
       op_def.src_tensors.push_back({data_type, storage, Layout::HWC});
       op_def.dst_tensors.push_back({data_type, storage, Layout::HWC});
       TensorFloat32 dst_tensor;
-      ConvPowerVR operation;
-      ASSERT_OK(CreateConvPowerVR(creation_context_, op_def, attr, &operation));
+      ConvPowerVR operation =
+          CreateConvPowerVR(creation_context_.GetDeviceInfo(), op_def, attr);
       ASSERT_OK(ExecuteGPUOperation(src_tensor, creation_context_, &operation,
                                     BHWC(1, 2, 2, 2), &dst_tensor));
       EXPECT_THAT(dst_tensor.data,

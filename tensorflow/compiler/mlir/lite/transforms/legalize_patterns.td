@@ -27,6 +27,9 @@ def NonOpaqueElementsAttr : ElementsAttrBase<
 def F32ElementsAttr : ElementsAttrBase<
   CPred<"$_self.cast<ElementsAttr>().getType().getElementType().isF32()">, "float constant tensor">;
 
+def Int64ElementsAttr : ElementsAttrBase<
+  CPred<"$_self.cast<ElementsAttr>().getType().getElementType().isInteger(64)">, "Int 64 constant tensor">;
+
 // Extract the ith int element from an ArrayAttr $0 as an 32-bit IntegerAttr
 // with builder.
 class ExtractI32At<int i> : NativeCodeCall<
@@ -49,6 +52,10 @@ def ExtractSingleElementAsInteger : NativeCodeCall<
 // Extracts the single int32 element from $_self.
 def ExtractSingleElementAsInt32 : NativeCodeCall<
     "$_builder.getI32IntegerAttr(ExtractSingleElementAsInteger($_self.cast<ElementsAttr>()).getInt())">;
+
+// Converts tensor with int64 to int32.
+def CreateTFLCastToInt32Op : NativeCodeCall<
+  "CreateCastToInt32($0, $_loc, $_builder)">;
 
 // Checks whether the given operation has static shapes and same shapes of all inputs.
 def HasSameStaticShapesPred : CPred<"HasSameStaticShapes($0.getDefiningOp())">;
@@ -109,6 +116,9 @@ def LegalizeArgMax : Pat<(TF_ArgMaxOp $input, $dim),
 def LegalizeArgMin : Pat<(TF_ArgMinOp $input, $dim),
                          (TFL_ArgMinOp $input, $dim)>;
 
+def LegalizeBroadcastTo : Pat<(TF_BroadcastToOp $input, $dim),
+                              (TFL_BroadcastToOp $input, $dim)>;
+
 def LegalizeCeil : Pat<(TF_CeilOp $arg), (TFL_CeilOp $arg)>;
 
 def LegalizeCos : Pat<(TF_CosOp $arg), (TFL_CosOp $arg)>;
@@ -149,6 +159,7 @@ def LegalizeMaxPool2D : Pat<
               IsIntList1XY1:$ksize,
               IsIntList1XY1:$strides,
               $padding,
+              $explicit_paddings,
               IsDataFormatNHWC:$format),
           (TFL_MaxPool2DOp $value,
               /*padding=*/$padding,
@@ -207,8 +218,11 @@ def LegalizeSoftPlus : Pat<(TF_SoftplusOp F32Tensor:$arg0),
 def LegalizeSqueeze : Pat<(TF_SqueezeOp $arg, $squeeze_dims),
                           (TFL_SqueezeOp $arg, $squeeze_dims)>;
 def LegalizeTanh : Pat<(TF_TanhOp $arg), (TFL_TanhOp $arg)>;
+
 def LegalizeTranspose : Pat<(TF_TransposeOp $arg, $perm),
-                            (TFL_TransposeOp $arg, $perm)>;
+                            (TFL_TransposeOp $arg,
+                            (CreateTFLCastToInt32Op $perm))>;
+
 def LegalizeWhere : Pat<(TF_WhereOp $arg), (TFL_WhereOp $arg)>;
 def LegalizeZerosLike : Pat<(TF_ZerosLikeOp $arg), (TFL_ZerosLikeOp $arg)>;
 
@@ -253,7 +267,7 @@ def LegalizeAddv2 : Pat<(TF_AddV2Op $lhs, $rhs),
                         (TFL_AddOp $lhs, $rhs, TFL_AF_None)>;
 def LegalizeBiasAdd : Pat<
   (TF_BiasAddOp F32Tensor:$l, F32Tensor:$r, IsDataFormatNHWC:$data_format),
-  (TFL_AddOp $l, $r, TFL_AF_None)>;
+  (TF_AddV2Op $l, $r)>;
 def LegalizeSub : Pat<(TF_SubOp $lhs, $rhs),
                       (TFL_SubOp $lhs, $rhs, TFL_AF_None)>;
 def LegalizeMul : Pat<(TF_MulOp $lhs, $rhs),
@@ -430,3 +444,7 @@ def LegalizeMatrixSetDiag : Pat<
 def LegalizeScatterNd : Pat<
   (TF_ScatterNdOp I32Tensor:$indices, $updates, $shape),
   (TFL_ScatterNdOp I32Tensor:$indices, $updates, $shape)>;
+
+def LegalizeCumsum : Pat<
+  (TF_CumsumOp $input, $axis, $exclusive, $reverse),
+  (TFL_CumsumOp $input, $axis, $exclusive, $reverse)>;

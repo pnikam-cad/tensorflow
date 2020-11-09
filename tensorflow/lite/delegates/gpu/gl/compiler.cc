@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/memory/memory.h"
 #include "absl/types/any.h"
 #include "tensorflow/lite/delegates/gpu/common/data_type.h"
@@ -64,21 +65,19 @@ bool ExceedsMaxSize(const Object& object, const GpuInfo& gpu_info) {
 }
 
 ObjectType ChooseFastestObjectType(const GpuInfo& gpu_info) {
-  return gpu_info.type == GpuType::ADRENO ? ObjectType::TEXTURE
-                                          : ObjectType::BUFFER;
+  return gpu_info.IsAdreno() ? ObjectType::TEXTURE : ObjectType::BUFFER;
 }
 
 ObjectType ChooseFastestRefObjectType(const GpuInfo& gpu_info,
                                       const CompilationOptions& options) {
-  if (gpu_info.type != GpuType::ADRENO) {
+  if (!gpu_info.IsAdreno()) {
     return ObjectType::BUFFER;
   }
-  switch (gpu_info.gpu_model) {
-    case GpuModel::ADRENO630:
-      return ObjectType::TEXTURE;
-    default:
-      return options.allow_precision_loss ? ObjectType::TEXTURE
-                                          : ObjectType::BUFFER;
+  if (gpu_info.adreno_info.adreno_gpu == AdrenoGpu::kAdreno630) {
+    return ObjectType::TEXTURE;
+  } else {
+    return options.allow_precision_loss ? ObjectType::TEXTURE
+                                        : ObjectType::BUFFER;
   }
 }
 
@@ -102,9 +101,10 @@ class CompilerImpl : public Compiler {
     }
   }
 
-  absl::Status Compile(const GraphFloat32& graph,
-                       const std::unordered_set<int>& tflite_graph_io,
-                       const ShaderCodeCallback& callback) final {
+  absl::Status Compile(
+      const GraphFloat32& graph,
+      const std::unordered_set<int>& tflite_graph_io,  // NOLINT
+      const ShaderCodeCallback& callback) final {
     // It is important to have ids in a compiled graph identical to the given
     // graph.
     RETURN_IF_ERROR(graph.MakeExactCopy(&compiled_graph_));
@@ -158,7 +158,7 @@ class CompilerImpl : public Compiler {
     }
 
     // Prepare internal objects.
-    std::unordered_map<ValueId, Object> objects;
+    absl::flat_hash_map<ValueId, Object> objects;
     for (auto value : compiled_graph_.values()) {
       Object object = MakePHWC4Ref(value->id, value->tensor.shape);
       object.data_type = value->tensor.type;

@@ -26,6 +26,7 @@ import scipy.sparse
 from tensorflow.core.protobuf import config_pb2
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
+from tensorflow.python.eager.context import get_config
 from tensorflow.python.framework import config
 from tensorflow.python.framework import errors_impl
 from tensorflow.python.framework import ops
@@ -36,11 +37,11 @@ from tensorflow.python.keras import combinations
 from tensorflow.python.keras.engine import input_layer
 from tensorflow.python.keras.layers import advanced_activations
 from tensorflow.python.keras.layers import normalization
+from tensorflow.python.keras.utils import tf_inspect
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import nn
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
-from tensorflow.python.util import tf_inspect
 
 
 def compare_single_input_op_to_numpy(keras_op,
@@ -106,7 +107,7 @@ class BackendResetTest(test.TestCase, parameterized.TestCase):
     # User defined jit setting
     config.set_optimizer_jit(False)
     sess = backend.get_session()
-    default_config = context.context().config
+    default_config = get_config()
     self.assertEqual(
         sess._config.graph_options.optimizer_options.global_jit_level,
         default_config.graph_options.optimizer_options.global_jit_level)
@@ -114,7 +115,7 @@ class BackendResetTest(test.TestCase, parameterized.TestCase):
 
     # New session has the same jit setting
     sess = backend.get_session()
-    default_config = context.context().config
+    default_config = get_config()
     self.assertEqual(
         sess._config.graph_options.optimizer_options.global_jit_level,
         default_config.graph_options.optimizer_options.global_jit_level)
@@ -123,7 +124,7 @@ class BackendResetTest(test.TestCase, parameterized.TestCase):
     # Change respected
     config.set_optimizer_jit(True)
     sess = backend.get_session()
-    default_config = context.context().config
+    default_config = get_config()
     self.assertEqual(
         sess._config.graph_options.optimizer_options.global_jit_level,
         default_config.graph_options.optimizer_options.global_jit_level)
@@ -169,7 +170,7 @@ class BackendUtilsTest(test.TestCase):
           sess.run(y, feed_dict={x: np.random.random((2, 3))})
 
   def test_learning_phase_name(self):
-    with ops.name_scope('test_scope'):
+    with backend.name_scope('test_scope'):
       # Test that outer name scopes do not affect the learning phase's name.
       lp = backend.symbolic_learning_phase()
     self.assertEqual(lp.name, 'keras_learning_phase:0')
@@ -491,7 +492,7 @@ class BackendLinearAlgebraTest(test.TestCase, parameterized.TestCase):
                                      input_shape_b=(4, 7))
 
   def test_relu(self):
-    x = ops.convert_to_tensor_v2([[-4, 0], [2, 7]], 'float32')
+    x = ops.convert_to_tensor_v2_with_dispatch([[-4, 0], [2, 7]], 'float32')
 
     # standard relu
     relu_op = backend.relu(x)
@@ -1310,7 +1311,7 @@ class BackendNNOpsTest(test.TestCase, parameterized.TestCase):
     inputs = backend.variable(input_val)
     initial_states = [
         backend.variable(init_state_val),
-        ops.convert_to_tensor_v2(
+        ops.convert_to_tensor_v2_with_dispatch(
             np.concatenate([init_state_val, init_state_val], axis=-1))
     ]
     mask = backend.variable(np_mask)
@@ -1617,9 +1618,11 @@ class BackendCrossEntropyLossesTest(test.TestCase, parameterized.TestCase):
     p = backend.placeholder()
     o = backend.categorical_crossentropy(t, p)
 
-    t_val = ops.convert_to_tensor_v2([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
-    p_val = ops.convert_to_tensor_v2([[.9, .05, .05], [.05, .89, .06],
-                                      [.05, .01, .94]])
+    t_val = ops.convert_to_tensor_v2_with_dispatch([[1., 0., 0.], [0., 1., 0.],
+                                                    [0., 0., 1.]])
+    p_val = ops.convert_to_tensor_v2_with_dispatch([[.9, .05, .05],
+                                                    [.05, .89, .06],
+                                                    [.05, .01, .94]])
     f = backend.function([t, p], o)
 
     result = f([t_val, p_val])
@@ -1633,7 +1636,8 @@ class BackendCrossEntropyLossesTest(test.TestCase, parameterized.TestCase):
     self.assertArrayNear(result, [.105, .065, .111], 1e-3)
 
     # from logits
-    p_val = ops.convert_to_tensor_v2([[8., 1., 1.], [0., 9., 1.], [2., 3., 5.]])
+    p_val = ops.convert_to_tensor_v2_with_dispatch([[8., 1., 1.], [0., 9., 1.],
+                                                    [2., 3., 5.]])
     o = backend.categorical_crossentropy(t, p, from_logits=True)
     f = backend.function([t, p], o)
 
@@ -1685,9 +1689,10 @@ class BackendCrossEntropyLossesTest(test.TestCase, parameterized.TestCase):
     p = backend.placeholder()
     o = backend.sparse_categorical_crossentropy(t, p)
 
-    t_val = ops.convert_to_tensor_v2([0, 1, 2])
-    p_val = ops.convert_to_tensor_v2([[.9, .05, .05], [.05, .89, .06],
-                                      [.05, .01, .94]])
+    t_val = ops.convert_to_tensor_v2_with_dispatch([0, 1, 2])
+    p_val = ops.convert_to_tensor_v2_with_dispatch([[.9, .05, .05],
+                                                    [.05, .89, .06],
+                                                    [.05, .01, .94]])
     f = backend.function([t, p], o)
 
     result = f([t_val, p_val])
@@ -1703,7 +1708,8 @@ class BackendCrossEntropyLossesTest(test.TestCase, parameterized.TestCase):
       _ = f([t_val, p_val])
 
     # from logits
-    p_val = ops.convert_to_tensor_v2([[8., 1., 1.], [0., 9., 1.], [2., 3., 5.]])
+    p_val = ops.convert_to_tensor_v2_with_dispatch([[8., 1., 1.], [0., 9., 1.],
+                                                    [2., 3., 5.]])
     o = backend.sparse_categorical_crossentropy(t, p, from_logits=True)
     f = backend.function([t, p], o)
 
@@ -2124,9 +2130,10 @@ class ControlOpsTests(test.TestCase):
     self.assertEqual(backend.eval(tensor), [9.0])
 
   def test_unequal_rank(self):
-    x = ops.convert_to_tensor_v2(
+    x = ops.convert_to_tensor_v2_with_dispatch(
         np.array([[1, 2, 3], [4, 5, 6]]), dtype='float32')
-    y = ops.convert_to_tensor_v2(np.array([1, 2, 3]), dtype='float32')
+    y = ops.convert_to_tensor_v2_with_dispatch(
+        np.array([1, 2, 3]), dtype='float32')
 
     def true_func():
       return x

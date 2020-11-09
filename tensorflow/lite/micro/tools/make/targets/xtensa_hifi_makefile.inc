@@ -1,12 +1,32 @@
-# Settings for Xtensa toolchain.
-# Derived from xtensa_xpg_makefile.inc
-# The Xtensa environment variables should be configured externally (XTENSA_CORE, XTENSA_SYSTEM)
+# Settings for Xtensa toolchain for the hifi kernels.
+# REQUIRED:
+#  Environment variables:
+#   - XTENSA_BASE  must be set to location of
+#     the Xtensa developer tools installation directory.
+#  Command line arguments:
+#   - XTENSA_TOOLS_VERSION: For example: RI-2019.2-linux
+#   - XTENSA_CORE: The name of the Xtensa core to use
+#      For example: hifi3
 
 ifeq ($(TARGET), xtensa_hifi)
   TARGET_ARCH := hifi3_bd5
 
 $(eval $(call add_third_party_download,$(XTENSA_HIFI4_URL),$(XTENSA_HIFI4_MD5),xa_nnlib_hifi4,))
 $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),xa_nnlib_hifi5,))
+
+  ifndef XTENSA_BASE
+    $(error XTENSA_BASE is undefined)
+  endif
+
+  ifndef XTENSA_TOOLS_VERSION
+    $(error XTENSA_TOOLS_VERSION is undefined)
+  endif
+
+  ifndef XTENSA_CORE
+    $(error XTENSA_CORE is undefined)
+  endif
+
+  $(eval $(call add_third_party_download,$(XTENSA_HIFI4_URL),$(XTENSA_HIFI4_MD5),xa_nnlib_hifi4,))
 
   PLATFORM_ARGS = \
     -mno-mul16 \
@@ -22,6 +42,7 @@ $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),x
     -fno-unsafe-math-optimizations \
 
 
+  export PATH := $(XTENSA_BASE)/tools/$(XTENSA_TOOLS_VERSION)/XtensaTools/bin:$(PATH)
   TARGET_TOOLCHAIN_PREFIX := xt-
   CXX_TOOL := clang++
   CC_TOOL := clang

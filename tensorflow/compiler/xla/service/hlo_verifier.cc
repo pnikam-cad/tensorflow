@@ -670,14 +670,6 @@ Status ShapeVerifier::HandleReduce(HloInstruction* reduce) {
 }
 
 Status ShapeVerifier::HandleBitcast(HloInstruction* bitcast) {
-  // Bitcasts are not allowed to change the element type.
-  if (bitcast->operand(0)->shape().element_type() !=
-      bitcast->shape().element_type()) {
-    return InternalError(
-        "Bitcast can not change the element type from %s to %s",
-        PrimitiveType_Name(bitcast->operand(0)->shape().element_type()),
-        PrimitiveType_Name(bitcast->shape().element_type()));
-  }
   if (layout_sensitive_ &&
       shape_size_function_(bitcast->shape()) !=
           shape_size_function_(bitcast->operand(0)->shape())) {
@@ -707,6 +699,20 @@ Status ShapeVerifier::HandleBroadcast(HloInstruction* broadcast) {
                  (broadcast->shape().dimensions(output_dimension) ==
                   operand_shape.dimensions(operand_dimension)))
         << broadcast->ToString() << " operand shape " << operand_shape;
+  }
+  return Status::OK();
+}
+
+Status ShapeVerifier::HandleDynamicReshape(HloInstruction* dynamic_reshape) {
+  // Check for mixed precision.
+  const Shape& operand_shape = dynamic_reshape->operand(0)->shape();
+  TF_RET_CHECK(SameElementType(dynamic_reshape->shape(), operand_shape));
+  TF_RET_CHECK(ShapeUtil::ElementsIn(dynamic_reshape->shape()) ==
+               ShapeUtil::ElementsIn(operand_shape));
+  TF_RET_CHECK(dynamic_reshape->shape().rank() + 1 ==
+               dynamic_reshape->operand_count());
+  for (int64 i = 1; i < dynamic_reshape->operand_count(); ++i) {
+    TF_RET_CHECK(dynamic_reshape->operand(i)->shape().element_type() == S32);
   }
   return Status::OK();
 }
@@ -795,6 +801,28 @@ Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
       TF_RET_CHECK(LayoutUtil::HasLayout(operand_shape_with_layout));
     }
   }
+  for (const auto& pair : custom_call->output_to_operand_aliasing()) {
+    TF_RET_CHECK(pair.second.first < custom_call->operand_count())
+        << "Invalid aliasing operand index.";
+    TF_RET_CHECK(ShapeUtil::IndexIsValid(
+        custom_call->operand(pair.second.first)->shape(), pair.second.second))
+        << "Invalid aliasing operand shape index.";
+    TF_RET_CHECK(ShapeUtil::IndexIsValid(custom_call->shape(), pair.first))
+        << "Invalid aliasing output shape index.";
+    const Shape& output_subshape =
+        ShapeUtil::GetSubshape(custom_call->shape(), pair.first);
+    const Shape& operand_subshape = ShapeUtil::GetSubshape(
+        custom_call->operand(pair.second.first)->shape(), pair.second.second);
+    if (layout_sensitive_) {
+      TF_RET_CHECK(operand_subshape == output_subshape)
+          << "Different aliasing shapes: " << operand_subshape.ToString()
+          << " vs " << output_subshape.ToString();
+    } else {
+      TF_RET_CHECK(ShapeUtil::Compatible(output_subshape, operand_subshape))
+          << "Different aliasing shapes: " << operand_subshape.ToString()
+          << " vs " << output_subshape.ToString();
+    }
+  }
   return Status::OK();
 }
 
@@ -853,12 +881,16 @@ Status ShapeVerifier::HandleMap(HloInstruction* map) {
 }
 
 Status ShapeVerifier::HandleReduceWindow(HloInstruction* reduce_window) {
+  VLOG(2) << "Verify reduce window:" << reduce_window->ToString() << "\n";
+  auto reduce_window_instr = Cast<HloReduceWindowInstruction>(reduce_window);
+  auto input_shapes = reduce_window_instr->input_array_shapes();
+  VLOG(2) << "reduce window input shape count: " << input_shapes.size() << "\n";
+  auto init_shapes = reduce_window_instr->init_value_shapes();
+  VLOG(2) << "reduce instruction is :" << reduce_window->ToString() << "\n";
   TF_RETURN_IF_ERROR(CheckShape(
-      reduce_window,
-      ShapeInference::InferReduceWindowShape(
-          reduce_window->operand(0)->shape(),
-          reduce_window->operand(1)->shape(), reduce_window->window(),
-          reduce_window->to_apply()->ComputeProgramShape())));
+      reduce_window, ShapeInference::InferReduceWindowShape(
+                         input_shapes, init_shapes, reduce_window->window(),
+                         reduce_window->to_apply()->ComputeProgramShape())));
 
   return allow_mixed_precision_
              ? Status::OK()
@@ -1031,7 +1063,7 @@ namespace {
 // inputs.
 Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
   switch (instruction->opcode()) {
-    // White list the following opcodes for mixed-precision check, because
+    // Allow-list the following opcodes for mixed-precision check, because
     // they involve data pass through or grouping via tuples, where the
     // precisions of buffers can be different.
     case HloOpcode::kCall:
@@ -1154,6 +1186,7 @@ Status ShapeVerifier::CheckShape(const HloInstruction* instruction,
       case HloOpcode::kCopyDone:
       case HloOpcode::kCopyStart:
       case HloOpcode::kCustomCall:
+      case HloOpcode::kDynamicUpdateSlice:
       case HloOpcode::kGetTupleElement:
       case HloOpcode::kInfeed:
       case HloOpcode::kOutfeed:
