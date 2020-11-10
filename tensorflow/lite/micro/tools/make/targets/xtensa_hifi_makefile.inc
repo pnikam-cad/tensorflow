@@ -27,6 +27,7 @@ $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),x
   endif
 
   $(eval $(call add_third_party_download,$(XTENSA_HIFI4_URL),$(XTENSA_HIFI4_MD5),xa_nnlib_hifi4,))
+  $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),xa_nnlib_hifi5,))
 
   PLATFORM_ARGS = \
     -mno-mul16 \
@@ -49,6 +50,11 @@ $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),x
 
   CXXFLAGS += $(PLATFORM_ARGS)
   CCFLAGS += $(PLATFORM_ARGS)
+
+  # Disabling optimizations for .cc files for HiFi build.
+  # With optimzation some of the unit test cases fail. 
+  # TODO(pnikam-cad): Fix unit test case failures seen with -O3 
+  CXXFLAGS += -O0
 
   TEST_SCRIPT := tensorflow/lite/micro/testing/test_xtensa_hifi_binary.sh
 

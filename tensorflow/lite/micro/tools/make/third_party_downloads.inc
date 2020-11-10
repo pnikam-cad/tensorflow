@@ -91,12 +91,6 @@ XTENSA_HIFI4_MD5 :="45fdc1209a8da62ab568aa6040f7eabf"
 XTENSA_HIFI5_URL :="https://github.com/foss-xtensa/nnlib-hifi5/raw/master/archive/xa_nnlib_hifi5_09_17.zip"
 XTENSA_HIFI5_MD5 :="ab377b8d03ef00c6b069f28b7ad9f057"
 
-ETHOSU_URL := "https://git.mlplatform.org/ml/ethos-u/ethos-u-core-driver.git/snapshot/ethos-u-core-driver-bcb5aaa99756f1b5c1295b079ebdd60996bc75a5.tar.gz"
-ETHOSU_MD5 := "d2073c8d88fc167fd5c46b5dcda58ea1"
-
-HIMAX_WE1_SDK_URL ="https://www.himax.com.tw/we-i/himax_we1_sdk_v02.zip"
-HIMAX_WE1_SDK_MD5 ="9a4b2f29b16052764e437b64bdcba816"
-
 ETHOSU_URL := "https://git.mlplatform.org/ml/ethos-u/ethos-u-core-driver.git/snapshot/ethos-u-core-driver-2b201c340788ac582cec160b7217c2b5405b04f9.tar.gz"
 ETHOSU_MD5 := "0c148b90a1ee01de398892eb3a63e717"
 
