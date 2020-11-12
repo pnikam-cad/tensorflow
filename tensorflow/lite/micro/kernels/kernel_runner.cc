@@ -27,10 +27,11 @@ constexpr int KernelRunner::kNumScratchBuffers_;
 constexpr int KernelRunner::kKernelRunnerBufferSize_;
 uint8_t KernelRunner::kKernelRunnerBuffer_[];
 
+// Using -O0 optimization level to avoid clash seen with compiler optimizations on xtensa platform
 KernelRunner::KernelRunner(const TfLiteRegistration& registration,
                            TfLiteTensor* tensors, int tensors_size,
                            TfLiteIntArray* inputs, TfLiteIntArray* outputs,
-                           void* builtin_data, ErrorReporter* error_reporter)
+                           void* builtin_data, ErrorReporter* error_reporter) __attribute__((optimize("-O0")))
     : allocator_(SimpleMemoryAllocator::Create(
           error_reporter, kKernelRunnerBuffer_, kKernelRunnerBufferSize_)),
       registration_(registration),

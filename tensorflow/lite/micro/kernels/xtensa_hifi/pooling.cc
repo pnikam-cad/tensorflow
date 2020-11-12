@@ -273,21 +273,77 @@ TfLiteStatus AverageEvalQuantized(TfLiteContext* context,
         "AveragepoolAsym8: xa_nn_vec_activation_min_max_asym8_asym8 failed");
 
   } else {
-    PoolParams op_params;
-    op_params.stride_height = params->stride_height;
-    op_params.stride_width = params->stride_width;
-    op_params.filter_height = params->filter_height;
-    op_params.filter_width = params->filter_width;
-    op_params.padding_values.height = data->padding.height;
-    op_params.padding_values.width = data->padding.width;
-    op_params.quantized_activation_min = data->activation_min;
-    op_params.quantized_activation_max = data->activation_max;
+    const int stride_height = params->stride_height;
+    const int stride_width = params->stride_width;
+    const int pad_width = data->padding.width;
+    const int pad_height = data->padding.height;
+    const int kernel_height = params->filter_height;
+    const int kernel_width = params->filter_width;
 
-    reference_integer_ops::AveragePool(
-        op_params, tflite::micro::GetTensorShape(input),
-        tflite::micro::GetTensorData<int8_t>(input),
-        tflite::micro::GetTensorShape(output),
-        tflite::micro::GetTensorData<int8_t>(output));
+    const RuntimeShape& input_shape = tflite::micro::GetTensorShape(input);
+    const RuntimeShape& output_shape = tflite::micro::GetTensorShape(output);
+    const int batches = MatchingDim(input_shape, 0, output_shape, 0);
+    const int depth = MatchingDim(input_shape, 3, output_shape, 3);
+    const int input_height = input_shape.Dims(1);
+    const int input_width = input_shape.Dims(2);
+    const int output_height = output_shape.Dims(1);
+    const int output_width = output_shape.Dims(2);
+
+    const int8_t* inp_data_ptr;
+    int8_t* out_data_ptr;
+    int inp_data_format = 0, out_data_format = 0, out_length;
+    int inp_precision = PREC_8, out_precision = PREC_8;
+    void* p_scratch;
+    int err, required_scratch = 0;
+
+    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
+    p_scratch = (void*)xtensa_nnlib_scratch_buf;
+
+    required_scratch = xa_nn_avgpool_getsize(
+        depth, inp_precision, out_precision, input_height, input_width,
+        kernel_height, kernel_width,
+        stride_width,   // x_stride,
+        stride_height,  // y_stride,
+        pad_width,      // x_padding,
+        pad_height,     // y_padding,
+        output_height, output_width, inp_data_format, out_data_format);
+
+    if (required_scratch <= 0) {
+      TF_LITE_KERNEL_LOG(context,
+                         "Averagepool8: xa_nn_avgpool_getsize failed");
+      return kTfLiteError;
+    }
+
+    if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
+      TF_LITE_KERNEL_LOG(context,
+                         "Averagepool8: insufficient scratch memory");
+      return kTfLiteError;
+    }
+
+    inp_data_ptr = tflite::micro::GetTensorData<int8_t>(input);
+    out_data_ptr = tflite::micro::GetTensorData<int8_t>(output);
+
+    for (int batch = 0; batch < batches; ++batch) {
+      err = xa_nn_avgpool_8(
+          &out_data_ptr[output_height * output_width * depth * batch],
+          const_cast <int8_t *>(&inp_data_ptr[output_height * output_width * depth * batch]),
+          input_height, input_width, depth, kernel_height, kernel_width,
+          stride_width, stride_height, pad_width, pad_height, output_height,
+          output_width, inp_data_format, out_data_format, p_scratch);
+
+      CHECK_ERR_HIFI_NNLIB_KER(err,
+                               "Averagepool8: xa_nn_avgpool_8 failed");
+    }
+
+    out_length = batches * output_height * output_width * depth;
+    err = xa_nn_vec_activation_min_max_8_8(out_data_ptr, out_data_ptr,
+                                                   data->activation_min,
+                                                   data->activation_max, out_length);
+
+    CHECK_ERR_HIFI_NNLIB_KER(
+        err,
+        "Averagepool8: xa_nn_vec_activation_min_max_8_8 failed");
+
   }
   return kTfLiteOk;
 }
@@ -457,21 +513,73 @@ TfLiteStatus MaxEvalQuantized(TfLiteContext* context, TfLiteNode* node,
     CHECK_ERR_HIFI_NNLIB_KER(
         err, "MaxpoolAsym8: xa_nn_vec_activation_min_max_asym8_asym8 failed");
   } else {
-    tflite::PoolParams op_params;
-    op_params.stride_height = params->stride_height;
-    op_params.stride_width = params->stride_width;
-    op_params.filter_height = params->filter_height;
-    op_params.filter_width = params->filter_width;
-    op_params.padding_values.height = data->padding.height;
-    op_params.padding_values.width = data->padding.width;
-    op_params.quantized_activation_min = data->activation_min;
-    op_params.quantized_activation_max = data->activation_max;
+    const int stride_height = params->stride_height;
+    const int stride_width = params->stride_width;
+    const int pad_width = data->padding.width;
+    const int pad_height = data->padding.height;
+    const int kernel_height = params->filter_height;
+    const int kernel_width = params->filter_width;
 
-    reference_integer_ops::MaxPool(
-        op_params, tflite::micro::GetTensorShape(input),
-        tflite::micro::GetTensorData<int8_t>(input),
-        tflite::micro::GetTensorShape(output),
-        tflite::micro::GetTensorData<int8_t>(output));
+    const RuntimeShape& input_shape = tflite::micro::GetTensorShape(input);
+    const RuntimeShape& output_shape = tflite::micro::GetTensorShape(output);
+    const int batches = MatchingDim(input_shape, 0, output_shape, 0);
+    const int depth = MatchingDim(input_shape, 3, output_shape, 3);
+    const int input_height = input_shape.Dims(1);
+    const int input_width = input_shape.Dims(2);
+    const int output_height = output_shape.Dims(1);
+    const int output_width = output_shape.Dims(2);
+
+    const int8_t* inp_data_ptr;
+    int8_t* out_data_ptr;
+    int inp_data_format = 0, out_data_format = 0, out_length;
+    int inp_precision = PREC_8, out_precision = PREC_8;
+    void* p_scratch;
+    int err, required_scratch = 0;
+
+    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
+    p_scratch = (void*)xtensa_nnlib_scratch_buf;
+
+    required_scratch = xa_nn_maxpool_getsize(
+        depth, inp_precision, out_precision, input_height, input_width,
+        kernel_height, kernel_width,
+        stride_width,   // x_stride,
+        stride_height,  // y_stride,
+        pad_width,      // x_padding,
+        pad_height,     // y_padding,
+        output_height, output_width, inp_data_format, out_data_format);
+
+    if (required_scratch <= 0) {
+      TF_LITE_KERNEL_LOG(context, "Maxpool8: xa_nn_maxpool_getsize failed");
+      return kTfLiteError;
+    }
+
+    if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
+      TF_LITE_KERNEL_LOG(context, "Maxpool8: insufficient scratch memory");
+      return kTfLiteError;
+    }
+
+    inp_data_ptr = tflite::micro::GetTensorData<int8_t>(input);
+    out_data_ptr = tflite::micro::GetTensorData<int8_t>(output);
+
+
+    for (int batch = 0; batch < batches; ++batch) {
+      err = xa_nn_maxpool_8(
+          &out_data_ptr[output_height * output_width * depth * batch],
+          const_cast <int8_t *>(&inp_data_ptr[output_height * output_width * depth * batch]),
+          input_height, input_width, depth, kernel_height, kernel_width,
+          stride_width, stride_height, pad_width, pad_height, output_height,
+          output_width, inp_data_format, out_data_format, p_scratch);
+
+      CHECK_ERR_HIFI_NNLIB_KER(err, "Maxpool8: xa_nn_maxpool_8 failed");
+    }
+
+    out_length = batches * output_height * output_width * depth;
+    err = xa_nn_vec_activation_min_max_8_8(
+        out_data_ptr, out_data_ptr, data->activation_min, data->activation_max,
+        out_length);
+
+    CHECK_ERR_HIFI_NNLIB_KER(
+        err, "Maxpool8: xa_nn_vec_activation_min_max_8_8 failed");
   }
   return kTfLiteOk;
 }

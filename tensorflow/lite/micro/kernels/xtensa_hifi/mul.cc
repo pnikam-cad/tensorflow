@@ -138,6 +138,27 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
           tflite::micro::GetTensorShape(output),
           tflite::micro::GetTensorData<int8_t>(output));
     } else {
+#ifdef NNLIB_HIFI5
+        int err;
+        const RuntimeShape& input1_shape = tflite::micro::GetTensorShape(input1);
+        const RuntimeShape& input2_shape = tflite::micro::GetTensorShape(input2);
+        const RuntimeShape& output_shape = tflite::micro::GetTensorShape(output);
+        const int flat_size = MatchingElementsSize(input1_shape, input2_shape,
+                                                   output_shape);
+        err = xa_nn_elm_mul_asym8sxasym8s_asym8s(tflite::micro::GetTensorData<int8_t>(output),
+                                              op_params.output_offset,
+                                              op_params.output_shift,
+                                              op_params.output_multiplier,
+                                              op_params.quantized_activation_min,
+                                              op_params.quantized_activation_max,
+                                              tflite::micro::GetTensorData<int8_t>(input1) ,
+                                              op_params.input1_offset,
+                                              tflite::micro::GetTensorData<int8_t>(input2) ,
+                                              op_params.input2_offset,
+                                              flat_size);
+
+        CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_elm_mul_asym8sxasym8s_asym8s failed");
+#else
       reference_integer_ops::Mul(op_params,
                                  tflite::micro::GetTensorShape(input1),
                                  tflite::micro::GetTensorData<int8_t>(input1),
@@ -145,6 +166,7 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
                                  tflite::micro::GetTensorData<int8_t>(input2),
                                  tflite::micro::GetTensorShape(output),
                                  tflite::micro::GetTensorData<int8_t>(output));
+#endif /* NNLIB_HIFI5 */
     }
   } else if (output->type == kTfLiteUInt8) {
     if (need_broadcast) {
@@ -219,7 +241,7 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     err = xa_nn_vec_activation_min_max_f32_f32(
         tflite::micro::GetTensorData<float>(output),
         tflite::micro::GetTensorData<float>(output),
-        data->output_activation_min, data->output_activation_max, flat_size);
+        data->output_activation_min_f32, data->output_activation_max_f32, flat_size);
 
     CHECK_ERR_HIFI_NNLIB_KER(err,
                              "xa_nn_vec_activation_min_max_f32_f32 failed");

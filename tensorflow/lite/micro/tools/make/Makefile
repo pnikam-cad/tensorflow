@@ -137,9 +137,9 @@ COMMON_FLAGS := \
   $(OPTIMIZED_KERNEL_DEFINES) \
   $(TAG_DEFINES)
 
-# TODO(b/150240249): Add in -fno-rtti once that works for the Xtensa toolchain.
 CXXFLAGS := \
   -std=c++11 \
+  -fno-rtti \
   -fno-exceptions \
   -fno-threadsafe-statics \
   $(COMMON_FLAGS)
