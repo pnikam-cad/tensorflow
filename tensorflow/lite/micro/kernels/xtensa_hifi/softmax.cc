@@ -184,13 +184,6 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context,
     }
   } else if (input->type == kTfLiteInt8) {
     if (output->type == kTfLiteInt16) {
-#ifndef NNLIB_HIFI5
-      tflite::reference_ops::Softmax(
-          op_data, tflite::micro::GetTensorShape(input),
-          tflite::micro::GetTensorData<int8_t>(input),
-          tflite::micro::GetTensorShape(output),
-          tflite::micro::GetTensorData<int16_t>(output));
-#else
       const RuntimeShape& input_shape = tflite::micro::GetTensorShape(input);
       const int8_t* input_data = tflite::micro::GetTensorData<int8_t>(input);
       const RuntimeShape& output_shape = tflite::micro::GetTensorShape(output);
@@ -212,15 +205,7 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context,
         CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_softmax_asym8s_16 failed");
       }
       return kTfLiteOk;
-#endif
     } else {
-#ifndef NNLIB_HIFI5
-      tflite::reference_ops::Softmax(
-          op_data, tflite::micro::GetTensorShape(input),
-          tflite::micro::GetTensorData<int8_t>(input),
-          tflite::micro::GetTensorShape(output),
-          tflite::micro::GetTensorData<int8_t>(output));
-#else
       const RuntimeShape& input_shape = tflite::micro::GetTensorShape(input);
       const int8_t* input_data = tflite::micro::GetTensorData<int8_t>(input);
       const RuntimeShape& output_shape = tflite::micro::GetTensorShape(output);
@@ -241,7 +226,6 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context,
             p_scratch);
         CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_softmax_asym8s_asym8s failed");
       }
-#endif
     }
   } else {
     tflite::reference_ops::SoftmaxInt16(

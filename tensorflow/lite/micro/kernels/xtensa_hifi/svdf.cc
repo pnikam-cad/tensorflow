@@ -306,23 +306,11 @@ TfLiteStatus EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
 
   // Left shift the activation_state.
   {
-    ae_int16x4 *pDst = reinterpret_cast<ae_int16x4 *>(state_ptr);
-    ae_int16x4 *pSrc = reinterpret_cast<ae_int16x4 *>(state_ptr + 1);
-    ae_int16x4 d;
-    ae_valign valign1 = AE_LA64_PP(pSrc);
-    ae_valign valign2 = AE_ZALIGN64();
-
-    int loopcnt = (n_batch * n_filter * n_memory - 1);
-    for(int cnt = 0; cnt < (loopcnt >> 2); cnt++) {
-      AE_LA16X4_IP(d, valign1, pSrc);
-      AE_SA16X4_IP(d, valign2, pDst);
-    }
-    AE_SA64POS_FP(valign2, pDst);
-
-    for(int cnt1 = 0; cnt1 < (loopcnt & 0x3); cnt1++)
-    {
-      AE_L16_IP(d, (ae_int16 *)pSrc, 2);
-      AE_S16_0_IP(d, (ae_int16 *)pDst, 2);
+    int16_t* new_state_start = state_ptr;
+    const int16_t* old_state_start = state_ptr + 1;
+    const int16_t* old_state_end = state_ptr + n_batch * n_filter * n_memory;
+    while (old_state_start != old_state_end) {
+      *new_state_start++ = *old_state_start++;
     }
   }
 #endif

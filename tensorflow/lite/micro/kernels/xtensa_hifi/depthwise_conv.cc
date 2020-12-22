@@ -188,16 +188,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   data->output_zero_point = output->params.zero_point;
 
   // Calculate scratch memory requirements and request scratch buffer
-  //TODO(pnikam-cad): update after integrating new HiFi 4 lib
-#ifdef NNLIB_HIFI5
   if ((input->type == kTfLiteInt8) ||
       (input->type == kTfLiteUInt8) ||
-      (input->type == kTfLiteFloat32))
-#else
-  if ((input->type == kTfLiteUInt8) ||
-      (input->type == kTfLiteFloat32))
-#endif
-  {
+      (input->type == kTfLiteFloat32)) {
     const RuntimeShape& input_shape = GetTensorShape(input);
     const RuntimeShape& output_shape = GetTensorShape(output);
 
@@ -234,21 +227,6 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
           "DepthwiseConv: xa_nn_conv2d_depthwise_getsize failed");
       return kTfLiteError;
     }
-
-#ifndef NNLIB_HIFI5
-    const RuntimeShape& filter_shape = GetTensorShape(filter);
-    const int filter_depth = filter_shape.Dims(3);
-
-    if (input->type == kTfLiteUInt8) {
-      int filter_depth_padded = (filter_depth + 3) & (~3);
-      int filter_size_padded = filter_height * filter_width * filter_depth_padded;
-      required_scratch += ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded, 8);
-    } else if (input->type == kTfLiteFloat32) {
-      int filter_depth_padded = (filter_depth + 1) & (~1);
-      int filter_size_padded = filter_height * filter_width * filter_depth_padded;
-      required_scratch += ALIGNED_SIZE(sizeof(float) * filter_size_padded, 8);
-    }
-#endif /* NNLIB_HIFI5 */
 
     const TfLiteStatus scratch_status = context->RequestScratchBufferInArena(
         context, required_scratch,
@@ -311,25 +289,7 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     p_scratch = static_cast<uint8_t*>(
         context->GetScratchBuffer(context, data.scratch_tensor_index));
 
-#ifndef NNLIB_HIFI5
-    const int filter_depth = filter_shape.Dims(3);
-    int filter_depth_padded = (filter_depth + 1) & (~1);
-    int filter_size_padded = filter_height * filter_width * filter_depth_padded;
-    p_filter = reinterpret_cast<float*>(p_scratch);
-    p_scratch += ALIGNED_SIZE(sizeof(float) * filter_size_padded, 8);
-
-    for (int h = 0; h < filter_height * filter_width; h++) {
-      for (int c = 0; c < filter_depth; c++) {
-        p_filter[h * filter_depth_padded + c] =
-            filter_data[h * filter_depth + c];
-      }
-      for (int c = filter_depth; c < filter_depth_padded; c++) {
-        p_filter[h * filter_depth_padded + c] = 0;
-      }
-    }
-#else
     p_filter = const_cast<float*>(filter_data);
-#endif /* NNLIB_HIFI5 */
 
     for (int i = 0; i < batches; i++) {
       err = xa_nn_conv2d_depthwise_f32(
@@ -404,7 +364,6 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
   op_params.quantized_activation_min = std::numeric_limits<int8_t>::min();
   op_params.quantized_activation_max = std::numeric_limits<int8_t>::max();
 
-#ifdef NNLIB_HIFI5
   // If dilation is not required use the optimized NN Library kernel.
   // Otherwise call the reference implementation.
   if ((params->dilation_width_factor == 1) &&
@@ -480,7 +439,6 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
         "failed");
     return kTfLiteOk;
   }
-#endif /* NNLIB_HIFI5 */
 
   reference_integer_ops::DepthwiseConvPerChannel(
       op_params, data.per_channel_output_multiplier,
@@ -553,24 +511,7 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
     uint8_t* p_scratch = static_cast<uint8_t*>(
         context->GetScratchBuffer(context, data.scratch_tensor_index));
 
-#ifndef NNLIB_HIFI5
-    const int filter_depth = filter_shape.Dims(3);
-    int filter_depth_padded = (filter_depth + 3) & (~3);
-    int filter_size_padded = filter_height * filter_width * filter_depth_padded;
-    uint8_t* p_filter = p_scratch;
-    p_scratch += ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded, 8);
-
-    int pad_value = filter_depth_padded - filter_depth;
-
-    for (int h = 0; h < filter_height * filter_width; h++) {
-      memcpy(&p_filter[h * filter_depth_padded], &filter_data[h * filter_depth],
-             filter_depth);
-      memset(&p_filter[h * filter_depth_padded + filter_depth], -filter_offset,
-             pad_value);
-    }
-#else
     uint8_t* p_filter = const_cast<uint8_t*>(filter_data);
-#endif
 
     for (i = 0; i < batches; i++) {
       err = xa_nn_conv2d_depthwise_asym8xasym8(

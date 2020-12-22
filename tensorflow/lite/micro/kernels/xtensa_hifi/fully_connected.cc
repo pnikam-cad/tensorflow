@@ -143,7 +143,6 @@ TfLiteStatus EvalQuantizedInt8(TfLiteContext* context, TfLiteNode* node,
   op_params.quantized_activation_min = data.output_activation_min;
   op_params.quantized_activation_max = data.output_activation_max;
 
-#ifdef NNLIB_HIFI5
   // TODO(pnikam-cad): remove this condition when all the testcases
   // have symmetric weights
   if (op_params.weights_offset == 0) {
@@ -177,7 +176,6 @@ TfLiteStatus EvalQuantizedInt8(TfLiteContext* context, TfLiteNode* node,
     CHECK_ERR_HIFI_NNLIB_KER(ret, "xa_nn_vec_activation_min_max_8_8 failed");
     return kTfLiteOk;
   }
-#endif
   reference_integer_ops::FullyConnected(
       op_params, tflite::micro::GetTensorShape(input),
       tflite::micro::GetTensorData<int8_t>(input),

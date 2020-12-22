@@ -203,16 +203,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   data->output_zero_point = output->params.zero_point;
 
   // Calculate scratch memory requirements and request scratch buffer
-  //TODO(pnikam-cad): update after integrating new HiFi 4 lib
-#ifdef NNLIB_HIFI5
   if ((input->type == kTfLiteInt8) ||
       (input->type == kTfLiteUInt8) ||
-      (input->type == kTfLiteFloat32))
-#else
-  if ((input->type == kTfLiteUInt8) ||
-      (input->type == kTfLiteFloat32))
-#endif
-  {
+      (input->type == kTfLiteFloat32)) {
     const RuntimeShape& input_shape = GetTensorShape(input);
     const RuntimeShape& filter_shape = GetTensorShape(filter);
     const int input_depth = MatchingDim(input_shape, 3, filter_shape, 3);
@@ -228,9 +221,16 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
       input_precision = PREC_F32;
     }
 
+#ifdef NNLIB_HIFI5
     int required_scratch = xa_nn_conv2d_std_getsize(
         input_height, input_depth, filter_height, filter_width, stride_height,
         pad_height, output_height, input_precision);
+#else
+    int output_channels = output->dims->data[3];
+    int required_scratch = xa_nn_conv2d_std_getsize(
+        input_height, input_depth, filter_height, filter_width, stride_height,
+        pad_height, output_height, output_channels, input_precision);
+#endif
 
     if (required_scratch <= 0) {
       TF_LITE_KERNEL_LOG(context,
@@ -238,20 +238,14 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
       return kTfLiteError;
     }
 
-#ifndef NNLIB_HIFI5
-    const int filter_depth = filter_shape.Dims(3);
-    const int output_depth = output->dims->data[3];
+    if (input->type == kTfLiteFloat32) {
+      const int filter_depth = filter_shape.Dims(3);
+      const int output_depth = output->dims->data[3];
 
-    if (input->type == kTfLiteUInt8) {
-      int filter_depth_padded = (filter_depth + 3) & (~3);
-      int filter_size_padded = output_depth * filter_height * filter_width * filter_depth_padded;
-      required_scratch += ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded, 8);
-    } else if (input->type == kTfLiteFloat32) {
       int filter_depth_padded = (filter_depth + 1) & (~1);
       int filter_size_padded = output_depth * filter_height * filter_width * filter_depth_padded;
       required_scratch += ALIGNED_SIZE(sizeof(float) * filter_size_padded, 8);
     }
-#endif /* NNLIB_HIFI5 */
 
     const TfLiteStatus scratch_status = context->RequestScratchBufferInArena(
         context, required_scratch,
@@ -346,29 +340,7 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
       uint8_t* p_scratch = static_cast<uint8_t*>(
           context->GetScratchBuffer(context, data.scratch_tensor_index));
 
-#ifndef NNLIB_HIFI5
-      const int filter_depth = filter_shape.Dims(3);
-      int filter_depth_padded = (filter_depth + 3) & (~3);
-      int filter_size_padded =
-          filter_height * filter_width * filter_depth_padded;
-      uint8_t* p_filter = p_scratch;
-      p_scratch +=
-          ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded * output_depth, 8);
-
-      // Padding filter coefficients depthwise
-      for (int h = 0; h < filter_height * filter_width * output_depth; h++) {
-        for (int c = 0; c < filter_depth; c++) {
-          p_filter[h * filter_depth_padded + c] =
-              filter_data[h * filter_depth + c];
-        }
-        for (int c = input_depth; c < filter_depth_padded; c++) {
-          p_filter[h * filter_depth_padded + c] =
-              -filter_offset;  // filter_depth[h*input_depth + c];
-        }
-      }
-#else
       uint8_t* p_filter = const_cast<uint8_t*>(filter_data);
-#endif
 
       for (int batch = 0; batch < batches; ++batch) {
         uint8_t* p_out_temp;
@@ -434,7 +406,6 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
                              TfLiteEvalTensor* output,
                              TfLiteEvalTensor* im2col) {
 
-#ifdef NNLIB_HIFI5
   if ((params->dilation_width_factor == 1) &&
       (params->dilation_height_factor == 1)) {
     const int32_t input_offset = -data.input_zero_point;
@@ -474,6 +445,7 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
     int8_t *p_filter;
     int out_length = output_height * output_width * output_depth;
 
+#ifdef NNLIB_HIFI5
     if(filter_height == 1 && filter_width == 1)
     {
       for (int batch = 0; batch < batches; ++batch) {
@@ -508,6 +480,7 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
       }
     }
     else
+#endif /* NNLIB_HIFI5 */
     {
       p_scratch = static_cast<void*>(
           context->GetScratchBuffer(context, data.scratch_tensor_index));
@@ -542,7 +515,6 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
     }
     return kTfLiteOk;
   }
-#endif /* NNLIB_HIFI5 */
   // TODO(b/154032858): Investigate removing extra copies.
   ConvParams op_params;
   op_params.input_offset = -data.input_zero_point;

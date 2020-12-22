@@ -15,22 +15,26 @@ installation directory.
 
 ## Optimized HiFi NN Library support  
   
-Two HiFi NN Libraries are integerated into TensorFlow Lite for Microcontrollers:
+Two HiFi NN Libraries are available for integration into TensorFlow Lite 
+for Microcontrollers:
 HiFi 4 NN Library
 HiFi 5 NN Library
 
 These libraries contain HiFi optimized implementation of various low level 
-NN kernels.
-The folder, tensorflow/lite/micro/kernels/xtensa_hifi, contains the integration
+NN kernels. The folder, tensorflow/lite/micro/kernels/xtensa_hifi, contains the integration
 code for using the HiFi NN Libraries.
+
+The HiFi 4 NN Library can be compiled for HiFi 4, HiFi 3, HiFi 3z and FusionF1. 
   
-HiFi NN Library support is available for following HiFi DSPs:
+HiFi NN Library support different HiFi DSPs:
 Using HiFi 4 NN Library:
   HiFi 4 
+  HiFi 3 
   HiFi 3Z
   Fusion F1
+  HiFi 5 
 Using HiFi 5 NN Library:
-  HiFi 5
+  HiFi 5 (needs NN extension)
   
 
 ## Building for HiFi Processors
