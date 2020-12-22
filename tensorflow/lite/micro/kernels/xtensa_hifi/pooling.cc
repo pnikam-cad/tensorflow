@@ -60,6 +60,7 @@ struct OpData {
   int32_t activation_max;
   float activation_min_f32;
   float activation_max_f32;
+  int scratch_tensor_index;
 };
 
 TfLiteStatus CalculateOpData(const TfLiteContext* context,
@@ -107,33 +108,11 @@ TfLiteStatus AverageEvalFloat(TfLiteContext* context, const TfLiteNode* node,
   const float* inp_data_ptr;
   float* out_data_ptr;
   int inp_data_format = 0, out_data_format = 0, out_length;
-  int inp_precision = PREC_F32, out_precision = PREC_F32;
   void* p_scratch;
-  int err, required_scratch = 0;
+  int err;
 
-  ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-  p_scratch = reinterpret_cast<void*>(xtensa_nnlib_scratch_buf);
-
-  required_scratch = xa_nn_avgpool_getsize(
-      depth, inp_precision, out_precision, input_height, input_width,
-      kernel_height, kernel_width,
-      stride_width,   // x_stride,
-      stride_height,  // y_stride,
-      pad_width,      // x_padding,
-      pad_height,     // y_padding,
-      output_height, output_width, inp_data_format, out_data_format);
-
-  if (required_scratch <= 0) {
-    TF_LITE_KERNEL_LOG(context,
-                       "AveragepoolFloat: xa_nn_avgpool_getsize failed");
-    return kTfLiteError;
-  }
-
-  if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-    TF_LITE_KERNEL_LOG(context,
-                       "AveragepoolFloat: insufficient scratch memory");
-    return kTfLiteError;
-  }
+  p_scratch = static_cast<void*>(
+      context->GetScratchBuffer(context, data->scratch_tensor_index));
 
   inp_data_ptr = tflite::micro::GetTensorData<float>(input);
   out_data_ptr = tflite::micro::GetTensorData<float>(output);
@@ -150,28 +129,13 @@ TfLiteStatus AverageEvalFloat(TfLiteContext* context, const TfLiteNode* node,
   }
 
   out_length = batches * output_height * output_width * depth;
-  uint32_t p_unalign_val = (uint32_t)out_data_ptr, p_align_val;
-  p_align_val = (p_unalign_val + 7) & (~7);
+  err = xa_nn_vec_activation_min_max_f32_f32(
+      out_data_ptr, out_data_ptr, data->activation_min_f32,
+      data->activation_max_f32, out_length);
 
-  // pre loop for activation_min_max
-  int pre_loop_count = p_align_val - p_unalign_val;
-  pre_loop_count = MIN(pre_loop_count, out_length);
+  CHECK_ERR_HIFI_NNLIB_KER(
+      err, "AveragepoolFloat: xa_nn_vec_activation_min_max_f32_f32 failed");
 
-  for (int i = 0; i < pre_loop_count; i++) {
-    ACTIVATION_MIN_MAX(float, out_data_ptr[i], out_data_ptr[i],
-                       data->activation_min_f32, data->activation_max_f32)
-  }
-
-  out_length = out_length - pre_loop_count;
-
-  if (out_length) {
-    err = xa_nn_vec_activation_min_max_f32_f32(
-        out_data_ptr, out_data_ptr, data->activation_min_f32,
-        data->activation_max_f32, out_length);
-
-    CHECK_ERR_HIFI_NNLIB_KER(
-        err, "AveragepoolFloat: xa_nn_vec_activation_min_max_f32_f32 failed");
-  }
 #else
   PoolParams op_params;
   op_params.stride_height = params->stride_height;
@@ -220,33 +184,11 @@ TfLiteStatus AverageEvalQuantized(TfLiteContext* context,
     const uint8_t* inp_data_ptr;
     uint8_t* out_data_ptr;
     int inp_data_format = 0, out_data_format = 0, out_length;
-    int inp_precision = PREC_ASYM8, out_precision = PREC_ASYM8;
     void* p_scratch;
-    int err, required_scratch = 0;
+    int err;
 
-    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    p_scratch = reinterpret_cast<void*>(xtensa_nnlib_scratch_buf);
-
-    required_scratch = xa_nn_avgpool_getsize(
-        depth, inp_precision, out_precision, input_height, input_width,
-        kernel_height, kernel_width,
-        stride_width,   // x_stride,
-        stride_height,  // y_stride,
-        pad_width,      // x_padding,
-        pad_height,     // y_padding,
-        output_height, output_width, inp_data_format, out_data_format);
-
-    if (required_scratch <= 0) {
-      TF_LITE_KERNEL_LOG(context,
-                         "AveragepoolAsym8: xa_nn_avgpool_getsize failed");
-      return kTfLiteError;
-    }
-
-    if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-      TF_LITE_KERNEL_LOG(context,
-                         "AveragepoolAsym8: insufficient scratch memory");
-      return kTfLiteError;
-    }
+    p_scratch = static_cast<void*>(
+        context->GetScratchBuffer(context, data->scratch_tensor_index));
 
     inp_data_ptr = tflite::micro::GetTensorData<uint8_t>(input);
     out_data_ptr = tflite::micro::GetTensorData<uint8_t>(output);
@@ -292,33 +234,11 @@ TfLiteStatus AverageEvalQuantized(TfLiteContext* context,
     const int8_t* inp_data_ptr;
     int8_t* out_data_ptr;
     int inp_data_format = 0, out_data_format = 0, out_length;
-    int inp_precision = PREC_8, out_precision = PREC_8;
     void* p_scratch;
-    int err, required_scratch = 0;
+    int err;
 
-    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    p_scratch = (void*)xtensa_nnlib_scratch_buf;
-
-    required_scratch = xa_nn_avgpool_getsize(
-        depth, inp_precision, out_precision, input_height, input_width,
-        kernel_height, kernel_width,
-        stride_width,   // x_stride,
-        stride_height,  // y_stride,
-        pad_width,      // x_padding,
-        pad_height,     // y_padding,
-        output_height, output_width, inp_data_format, out_data_format);
-
-    if (required_scratch <= 0) {
-      TF_LITE_KERNEL_LOG(context,
-                         "Averagepool8: xa_nn_avgpool_getsize failed");
-      return kTfLiteError;
-    }
-
-    if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
-      TF_LITE_KERNEL_LOG(context,
-                         "Averagepool8: insufficient scratch memory");
-      return kTfLiteError;
-    }
+    p_scratch = static_cast<void*>(
+        context->GetScratchBuffer(context, data->scratch_tensor_index));
 
     inp_data_ptr = tflite::micro::GetTensorData<int8_t>(input);
     out_data_ptr = tflite::micro::GetTensorData<int8_t>(output);
@@ -374,31 +294,11 @@ TfLiteStatus MaxEvalFloat(TfLiteContext* context, TfLiteNode* node,
   const float* inp_data_ptr;
   float* out_data_ptr;
   int inp_data_format = 0, out_data_format = 0, out_length;
-  int inp_precision = PREC_F32, out_precision = PREC_F32;
   void* p_scratch;
-  int err, required_scratch = 0;
+  int err;
 
-  ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-  p_scratch = reinterpret_cast<void*>(xtensa_nnlib_scratch_buf);
-
-  required_scratch = xa_nn_maxpool_getsize(
-      depth, inp_precision, out_precision, input_height, input_width,
-      kernel_height, kernel_width,
-      stride_width,   // x_stride,
-      stride_height,  // y_stride,
-      pad_width,      // x_padding,
-      pad_height,     // y_padding,
-      output_height, output_width, inp_data_format, out_data_format);
-
-  if (required_scratch <= 0) {
-    TF_LITE_KERNEL_LOG(context, "MaxpoolFloat: xa_nn_maxpool_getsize failed");
-    return kTfLiteError;
-  }
-
-  if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-    TF_LITE_KERNEL_LOG(context, "MaxpoolFloat: insufficient scratch memory");
-    return kTfLiteError;
-  }
+  p_scratch = static_cast<void*>(
+      context->GetScratchBuffer(context, data->scratch_tensor_index));
 
   inp_data_ptr = tflite::micro::GetTensorData<float>(input);
   out_data_ptr = tflite::micro::GetTensorData<float>(output);
@@ -465,31 +365,11 @@ TfLiteStatus MaxEvalQuantized(TfLiteContext* context, TfLiteNode* node,
     const uint8_t* inp_data_ptr;
     uint8_t* out_data_ptr;
     int inp_data_format = 0, out_data_format = 0, out_length;
-    int inp_precision = PREC_ASYM8, out_precision = PREC_ASYM8;
     void* p_scratch;
-    int err, required_scratch = 0;
+    int err;
 
-    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    p_scratch = reinterpret_cast<void*>(xtensa_nnlib_scratch_buf);
-
-    required_scratch = xa_nn_maxpool_getsize(
-        depth, inp_precision, out_precision, input_height, input_width,
-        kernel_height, kernel_width,
-        stride_width,   // x_stride,
-        stride_height,  // y_stride,
-        pad_width,      // x_padding,
-        pad_height,     // y_padding,
-        output_height, output_width, inp_data_format, out_data_format);
-
-    if (required_scratch <= 0) {
-      TF_LITE_KERNEL_LOG(context, "MaxpoolAsym8: xa_nn_maxpool_getsize failed");
-      return kTfLiteError;
-    }
-
-    if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-      TF_LITE_KERNEL_LOG(context, "MaxpoolAsym8: insufficient scratch memory");
-      return kTfLiteError;
-    }
+    p_scratch = static_cast<void*>(
+        context->GetScratchBuffer(context, data->scratch_tensor_index));
 
     inp_data_ptr = tflite::micro::GetTensorData<uint8_t>(input);
     out_data_ptr = tflite::micro::GetTensorData<uint8_t>(output);
@@ -532,35 +412,14 @@ TfLiteStatus MaxEvalQuantized(TfLiteContext* context, TfLiteNode* node,
     const int8_t* inp_data_ptr;
     int8_t* out_data_ptr;
     int inp_data_format = 0, out_data_format = 0, out_length;
-    int inp_precision = PREC_8, out_precision = PREC_8;
     void* p_scratch;
-    int err, required_scratch = 0;
+    int err;
 
-    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    p_scratch = (void*)xtensa_nnlib_scratch_buf;
-
-    required_scratch = xa_nn_maxpool_getsize(
-        depth, inp_precision, out_precision, input_height, input_width,
-        kernel_height, kernel_width,
-        stride_width,   // x_stride,
-        stride_height,  // y_stride,
-        pad_width,      // x_padding,
-        pad_height,     // y_padding,
-        output_height, output_width, inp_data_format, out_data_format);
-
-    if (required_scratch <= 0) {
-      TF_LITE_KERNEL_LOG(context, "Maxpool8: xa_nn_maxpool_getsize failed");
-      return kTfLiteError;
-    }
-
-    if (required_scratch > (int)XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
-      TF_LITE_KERNEL_LOG(context, "Maxpool8: insufficient scratch memory");
-      return kTfLiteError;
-    }
+    p_scratch = static_cast<void*>(
+        context->GetScratchBuffer(context, data->scratch_tensor_index));
 
     inp_data_ptr = tflite::micro::GetTensorData<int8_t>(input);
     out_data_ptr = tflite::micro::GetTensorData<int8_t>(output);
-
 
     for (int batch = 0; batch < batches; ++batch) {
       err = xa_nn_maxpool_8(
@@ -647,7 +506,9 @@ void* Init(TfLiteContext* context, const char* buffer, size_t length) {
   return context->AllocatePersistentBuffer(context, sizeof(OpData));
 }
 
-TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+// Using separate Prepare functions for Averagepool and maxpool
+// because of different calls to get_size functions.
+TfLiteStatus AveragePrepare(TfLiteContext* context, TfLiteNode* node) {
   TFLITE_DCHECK(node->builtin_data != nullptr);
   auto* params = reinterpret_cast<TfLitePoolParams*>(node->builtin_data);
 
@@ -670,6 +531,128 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
                                       &data->activation_max);
   }
 
+  if ((input->type == kTfLiteInt8) ||
+      (input->type == kTfLiteUInt8) ||
+      (input->type == kTfLiteFloat32)) {
+    int input_precision, output_precision;
+
+    const int stride_height = params->stride_height;
+    const int stride_width = params->stride_width;
+    const int pad_width = data->padding.width;
+    const int pad_height = data->padding.height;
+    const int kernel_height = params->filter_height;
+    const int kernel_width = params->filter_width;
+    const RuntimeShape& input_shape = GetTensorShape(input);
+    const RuntimeShape& output_shape = GetTensorShape(output);
+    const int depth = MatchingDim(input_shape, 3, output_shape, 3);
+    const int input_height = input_shape.Dims(1);
+    const int input_width = input_shape.Dims(2);
+    const int output_height = output_shape.Dims(1);
+    const int output_width = output_shape.Dims(2);
+
+    if (input->type == kTfLiteInt8) {
+      output_precision = input_precision = PREC_8;
+    } else if (input->type == kTfLiteUInt8) {
+      output_precision = input_precision = PREC_ASYM8;
+    } else {
+      output_precision = input_precision = PREC_F32;
+    }
+
+    int required_scratch = xa_nn_avgpool_getsize(
+        depth, input_precision, output_precision, input_height, input_width,
+        kernel_height, kernel_width,
+        stride_width,   // x_stride,
+        stride_height,  // y_stride,
+        pad_width,      // x_padding,
+        pad_height,     // y_padding,
+        output_height, output_width, 0 /*NHWC input */, 0 /* NHWC output */);
+
+    if (required_scratch <= 0) {
+      TF_LITE_KERNEL_LOG(context,
+          "Averagepool: xa_nn_avgpool_getsize failed");
+      return kTfLiteError;
+    }
+
+    const TfLiteStatus scratch_status = context->RequestScratchBufferInArena(
+        context, required_scratch,
+        &(data->scratch_tensor_index));
+    TF_LITE_ENSURE_OK(context, scratch_status);
+
+  }
+  return kTfLiteOk;
+}
+
+TfLiteStatus MaxPrepare(TfLiteContext* context, TfLiteNode* node) {
+  TFLITE_DCHECK(node->builtin_data != nullptr);
+  auto* params = reinterpret_cast<TfLitePoolParams*>(node->builtin_data);
+
+  TFLITE_DCHECK(node->user_data != nullptr);
+  OpData* data = static_cast<OpData*>(node->user_data);
+
+  const TfLiteTensor* input = GetInput(context, node, kInputTensor);
+  TF_LITE_ENSURE(context, input != nullptr);
+  TfLiteTensor* output = GetOutput(context, node, kOutputTensor);
+  TF_LITE_ENSURE(context, output != nullptr);
+
+  TF_LITE_ENSURE_STATUS(CalculateOpData(context, params, input, output, data));
+
+  if (input->type == kTfLiteFloat32) {
+    CalculateActivationRange(params->activation, &data->activation_min_f32,
+                             &data->activation_max_f32);
+  } else if (input->type == kTfLiteInt8 || input->type == kTfLiteUInt8) {
+    CalculateActivationRangeQuantized(context, params->activation, output,
+                                      &data->activation_min,
+                                      &data->activation_max);
+  }
+
+  if ((input->type == kTfLiteInt8) ||
+      (input->type == kTfLiteUInt8) ||
+      (input->type == kTfLiteFloat32)) {
+    int input_precision, output_precision;
+
+    const int stride_height = params->stride_height;
+    const int stride_width = params->stride_width;
+    const int pad_width = data->padding.width;
+    const int pad_height = data->padding.height;
+    const int kernel_height = params->filter_height;
+    const int kernel_width = params->filter_width;
+    const RuntimeShape& input_shape = GetTensorShape(input);
+    const RuntimeShape& output_shape = GetTensorShape(output);
+    const int depth = MatchingDim(input_shape, 3, output_shape, 3);
+    const int input_height = input_shape.Dims(1);
+    const int input_width = input_shape.Dims(2);
+    const int output_height = output_shape.Dims(1);
+    const int output_width = output_shape.Dims(2);
+
+    if (input->type == kTfLiteInt8) {
+      output_precision = input_precision = PREC_8;
+    } else if (input->type == kTfLiteUInt8) {
+      output_precision = input_precision = PREC_ASYM8;
+    } else {
+      output_precision = input_precision = PREC_F32;
+    }
+
+    int required_scratch = xa_nn_maxpool_getsize(
+        depth, input_precision, output_precision, input_height, input_width,
+        kernel_height, kernel_width,
+        stride_width,   // x_stride,
+        stride_height,  // y_stride,
+        pad_width,      // x_padding,
+        pad_height,     // y_padding,
+        output_height, output_width, 0 /* NHWC inpput */, 0 /* NHWC output */);
+
+    if (required_scratch <= 0) {
+      TF_LITE_KERNEL_LOG(context,
+          "Maxpool: xa_nn_maxpool_getsize failed");
+      return kTfLiteError;
+    }
+
+    const TfLiteStatus scratch_status = context->RequestScratchBufferInArena(
+        context, required_scratch,
+        &(data->scratch_tensor_index));
+    TF_LITE_ENSURE_OK(context, scratch_status);
+
+  }
   return kTfLiteOk;
 }
 
@@ -678,7 +661,7 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 TfLiteRegistration Register_AVERAGE_POOL_2D() {
   return {/*init=*/pooling::Init,
           /*free=*/nullptr,
-          /*prepare=*/pooling::Prepare,
+          /*prepare=*/pooling::AveragePrepare,
           /*invoke=*/pooling::AverageEval,
           /*profiling_string=*/nullptr,
           /*builtin_code=*/0,
@@ -689,7 +672,7 @@ TfLiteRegistration Register_AVERAGE_POOL_2D() {
 TfLiteRegistration Register_MAX_POOL_2D() {
   return {/*init=*/pooling::Init,
           /*free=*/nullptr,
-          /*prepare=*/pooling::Prepare,
+          /*prepare=*/pooling::MaxPrepare,
           /*invoke=*/pooling::MaxEval,
           /*profiling_string=*/nullptr,
           /*builtin_code=*/0,

@@ -7,10 +7,8 @@ ifneq ($(filter xtensa_hifi, $(ALL_TAGS)),)
         NNLIB = xa_nnlib_hifi4
 
         CCFLAGS += -DNNLIB_V2 \
-                   -DXTENSA_NNLIB_MAX_SCRATCH_SIZE=70*1024
 
         CXXFLAGS += -DNNLIB_V2 \
-                    -DXTENSA_NNLIB_MAX_SCRATCH_SIZE=70*1024
 
         MICROLITE_CC_SRCS += \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/activations/hifi4/xa_nn_activations_f32_f32.c \
@@ -82,10 +80,8 @@ ifneq ($(filter xtensa_hifi, $(ALL_TAGS)),)
         NNLIB = xa_nnlib_hifi5
 
         CCFLAGS += -DNNLIB_HIFI5 \
-                   -DXTENSA_NNLIB_MAX_SCRATCH_SIZE=70*1024
 
         CXXFLAGS += -DNNLIB_HIFI5 \
-                    -DXTENSA_NNLIB_MAX_SCRATCH_SIZE=70*1024
 
         MICROLITE_CC_SRCS += \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/activations/hifi5/xa_nn_activations_f32_f32.c \

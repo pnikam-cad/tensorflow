@@ -52,9 +52,6 @@ limitations under the License.
 #define XTENSA_NNLIB_MAX_SCRATCH_SIZE (70 * 1024)
 #endif
 
-#define ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM \
-  uint8_t xtensa_nnlib_scratch_buf[XTENSA_NNLIB_MAX_SCRATCH_SIZE];
-
 #define MIN(a, b) (a) < (b) ? (a) : (b);
 #define MAX(a, b) (a) > (b) ? (a) : (b);
 

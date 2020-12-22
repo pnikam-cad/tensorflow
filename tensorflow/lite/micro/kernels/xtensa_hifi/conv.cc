@@ -83,6 +83,8 @@ struct OpData {
   // uint8_t these would be 0 and 255.
   int32_t output_activation_min;
   int32_t output_activation_max;
+
+  int scratch_tensor_index;
 };
 
 inline PaddingType RuntimePaddingType(TfLitePadding padding) {
@@ -200,6 +202,63 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   data->filter_zero_point = filter->params.zero_point;
   data->output_zero_point = output->params.zero_point;
 
+  // Calculate scratch memory requirements and request scratch buffer
+  //TODO(pnikam-cad): update after integrating new HiFi 4 lib
+#ifdef NNLIB_HIFI5
+  if ((input->type == kTfLiteInt8) ||
+      (input->type == kTfLiteUInt8) ||
+      (input->type == kTfLiteFloat32))
+#else
+  if ((input->type == kTfLiteUInt8) ||
+      (input->type == kTfLiteFloat32))
+#endif
+  {
+    const RuntimeShape& input_shape = GetTensorShape(input);
+    const RuntimeShape& filter_shape = GetTensorShape(filter);
+    const int input_depth = MatchingDim(input_shape, 3, filter_shape, 3);
+    const int stride_height = params->stride_height;
+    const int pad_height = data->padding.height;
+    int input_precision;
+
+    if (input->type == kTfLiteInt8) {
+      input_precision = -4; //PREC_ASYM8S;
+    } else if (input->type == kTfLiteUInt8) {
+      input_precision = PREC_ASYM8;
+    } else {
+      input_precision = PREC_F32;
+    }
+
+    int required_scratch = xa_nn_conv2d_std_getsize(
+        input_height, input_depth, filter_height, filter_width, stride_height,
+        pad_height, output_height, input_precision);
+
+    if (required_scratch <= 0) {
+      TF_LITE_KERNEL_LOG(context,
+          "conv2d_std: xa_nn_conv2d_std_getsize failed");
+      return kTfLiteError;
+    }
+
+#ifndef NNLIB_HIFI5
+    const int filter_depth = filter_shape.Dims(3);
+    const int output_depth = output->dims->data[3];
+
+    if (input->type == kTfLiteUInt8) {
+      int filter_depth_padded = (filter_depth + 3) & (~3);
+      int filter_size_padded = output_depth * filter_height * filter_width * filter_depth_padded;
+      required_scratch += ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded, 8);
+    } else if (input->type == kTfLiteFloat32) {
+      int filter_depth_padded = (filter_depth + 1) & (~1);
+      int filter_size_padded = output_depth * filter_height * filter_width * filter_depth_padded;
+      required_scratch += ALIGNED_SIZE(sizeof(float) * filter_size_padded, 8);
+    }
+#endif /* NNLIB_HIFI5 */
+
+    const TfLiteStatus scratch_status = context->RequestScratchBufferInArena(
+        context, required_scratch,
+        &(data->scratch_tensor_index));
+    TF_LITE_ENSURE_OK(context, scratch_status);
+  }
+
   return kTfLiteOk;
 }  // namespace conv
 
@@ -257,11 +316,8 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
     const int output_width = output_shape.Dims(2);
 
     int err, output_data_format = 0;
-    uint8_t* p_scratch;
-    uint8_t* p_filter;
     // Calculate filter_depth_padded as next near multiple of 4
     int out_length = output_height * output_width * output_depth;
-    int required_scratch, input_precision = PREC_ASYM8;
 
     if (filter_height == 1 && filter_width == 1) {
       for (int batch = 0; batch < batches; ++batch) {
@@ -287,35 +343,17 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
             err, "xa_nn_vec_activation_min_max_asym8_asym8 failed");
       }
     } else {
-      required_scratch = xa_nn_conv2d_std_getsize(
-          input_height, input_depth, filter_height, filter_width, stride_height,
-          pad_height, output_height, input_precision);
-
-      if (required_scratch <= 0) {
-        TF_LITE_KERNEL_LOG(context,
-                           "conv2d_std_asym8: xa_nn_conv2d_std_getsize failed");
-        return kTfLiteError;
-      }
-
-      ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-      p_scratch = xtensa_nnlib_scratch_buf;
+      uint8_t* p_scratch = static_cast<uint8_t*>(
+          context->GetScratchBuffer(context, data.scratch_tensor_index));
 
 #ifndef NNLIB_HIFI5
       const int filter_depth = filter_shape.Dims(3);
       int filter_depth_padded = (filter_depth + 3) & (~3);
       int filter_size_padded =
           filter_height * filter_width * filter_depth_padded;
-      p_filter = p_scratch;
-      required_scratch += ALIGNED_SIZE(
-          (sizeof(uint8_t) * filter_size_padded * output_depth), 8);
+      uint8_t* p_filter = p_scratch;
       p_scratch +=
           ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded * output_depth, 8);
-
-      if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-        TF_LITE_KERNEL_LOG(context,
-                           "conv2d_std_asym8: insufficient scratch memory");
-        return kTfLiteError;
-      }
 
       // Padding filter coefficients depthwise
       for (int h = 0; h < filter_height * filter_width * output_depth; h++) {
@@ -329,7 +367,7 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
         }
       }
 #else
-      p_filter = const_cast<uint8_t*>(filter_data);
+      uint8_t* p_filter = const_cast<uint8_t*>(filter_data);
 #endif
 
       for (int batch = 0; batch < batches; ++batch) {
@@ -435,7 +473,6 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
     void* p_scratch;
     int8_t *p_filter;
     int out_length = output_height * output_width * output_depth;
-    int required_scratch, input_precision = PREC_ASYM8S;
 
     if(filter_height == 1 && filter_width == 1)
     {
@@ -472,18 +509,8 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
     }
     else
     {
-      required_scratch = xa_nn_conv2d_std_getsize(
-          input_height, input_depth, filter_height, filter_width, stride_height,
-          pad_height, output_height, input_precision);
-
-      if (required_scratch <= 0) {
-        TF_LITE_KERNEL_LOG(context,
-            "conv2d_std_sym8s: xa_nn_conv2d_std_getsize failed");
-        return kTfLiteError;
-      }
-
-      ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-      p_scratch = xtensa_nnlib_scratch_buf;
+      p_scratch = static_cast<void*>(
+          context->GetScratchBuffer(context, data.scratch_tensor_index));
 
       p_filter = const_cast<int8_t*>(filter_data);
 
@@ -592,39 +619,19 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     const int output_width = output_shape.Dims(2);
     const int filter_depth = filter_shape.Dims(3);
     int err, output_data_format = 0;
-    uint8_t* p_scratch;
     float* p_filter;
     // Calculate filter_depth_padded as next near multiple of 2
     int filter_depth_padded = (filter_depth + 1) & (~1);
     int out_length = output_height * output_width * output_depth;
     int filter_size_padded = filter_height * filter_width * filter_depth_padded;
-    int required_scratch, input_precision = PREC_F32;
     int h, c;
 
-    required_scratch = xa_nn_conv2d_std_getsize(
-        input_height, input_depth, filter_height, filter_width, stride_height,
-        pad_height, output_height, input_precision);
-
-    if (required_scratch <= 0) {
-      TF_LITE_KERNEL_LOG(context,
-                         "conv2d_std_f32: xa_nn_conv2d_std_getsize failed");
-      return kTfLiteError;
-    }
-
-    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    p_scratch = xtensa_nnlib_scratch_buf;
+    uint8_t* p_scratch = static_cast<uint8_t*>(
+        context->GetScratchBuffer(context, data.scratch_tensor_index));
 
     p_filter = reinterpret_cast<float*>(p_scratch);
     p_scratch +=
         ALIGNED_SIZE((sizeof(float) * filter_size_padded * output_depth), 8);
-    required_scratch +=
-        ALIGNED_SIZE((sizeof(float) * filter_size_padded * output_depth), 8);
-
-    if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-      TF_LITE_KERNEL_LOG(context,
-                         "conv2d_std_f32: insufficient scratch memory");
-      return kTfLiteError;
-    }
 
     // Padding filter coefficients depthwise
     for (h = 0; h < filter_height * filter_width * output_depth; h++) {

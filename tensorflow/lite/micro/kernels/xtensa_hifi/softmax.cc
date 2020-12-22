@@ -52,6 +52,11 @@ namespace {
 // Softmax parameter data that persists in user_data
 static constexpr int kInt16LUTArraySize = 513;
 
+struct OpData {
+  SoftmaxParams op_data;
+  int scratch_tensor_index;
+};
+
 TfLiteStatus CalculateSoftmaxParams(TfLiteContext* context,
                                     const TfLiteTensor* input,
                                     TfLiteTensor* output,
@@ -114,7 +119,8 @@ TfLiteStatus CalculateSoftmaxParams(TfLiteContext* context,
 // Takes a tensor and performs softmax along the last dimension.
 TfLiteStatus SoftmaxFloat(TfLiteContext* context, const TfLiteEvalTensor* input,
                           TfLiteEvalTensor* output,
-                          const SoftmaxParams& op_data) {
+                          const OpData& data) {
+  const SoftmaxParams& op_data = data.op_data;
 #if HIFI_VFPU
   const RuntimeShape& input_shape = tflite::micro::GetTensorShape(input);
   const float* input_data = tflite::micro::GetTensorData<float>(input);
@@ -126,13 +132,9 @@ TfLiteStatus SoftmaxFloat(TfLiteContext* context, const TfLiteEvalTensor* input,
   const int depth =
       MatchingDim(input_shape, trailing_dim, output_shape, trailing_dim);
 
-  ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-  float* p_scratch = reinterpret_cast<float*>(xtensa_nnlib_scratch_buf);
+  float *p_scratch = static_cast<float *>(
+      context->GetScratchBuffer(context, data.scratch_tensor_index));
 
-  if (depth * sizeof(float) > XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
-    TF_LITE_KERNEL_LOG(context, "Softmax: insufficient scratch memory");
-    return kTfLiteError;
-  }
 
   for (int i = 0; i < outer_size; ++i) {
     for (int c = 0; c < depth; ++c) {
@@ -156,7 +158,9 @@ TfLiteStatus SoftmaxFloat(TfLiteContext* context, const TfLiteEvalTensor* input,
 TfLiteStatus SoftmaxQuantized(TfLiteContext* context,
                               const TfLiteEvalTensor* input,
                               TfLiteEvalTensor* output,
-                              const SoftmaxParams& op_data) {
+                              const OpData& data) {
+  const SoftmaxParams& op_data = data.op_data;
+
   if (input->type == kTfLiteUInt8) {
     const RuntimeShape& input_shape = tflite::micro::GetTensorShape(input);
     const uint8_t* input_data = tflite::micro::GetTensorData<uint8_t>(input);
@@ -168,14 +172,9 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context,
     const int depth =
         MatchingDim(input_shape, trailing_dim, output_shape, trailing_dim);
 
-    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    void* p_scratch = reinterpret_cast<void*>(xtensa_nnlib_scratch_buf);
+    void *p_scratch = static_cast<void*>(
+        context->GetScratchBuffer(context, data.scratch_tensor_index));
 
-    if (get_softmax_scratch_size(PREC_ASYM8, PREC_ASYM8, depth) >
-        XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
-      TF_LITE_KERNEL_LOG(context, "Softmax: insufficient scratch memory");
-      return kTfLiteError;
-    }
 
     for (int i = 0; i < outer_size; ++i) {
       int err = xa_nn_vec_softmax_asym8_asym8(
@@ -202,14 +201,8 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context,
       const int depth =
           MatchingDim(input_shape, trailing_dim, output_shape, trailing_dim);
 
-      ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-      void* p_scratch = xtensa_nnlib_scratch_buf;
-
-      if (get_softmax_scratch_size(-4, -4, depth) >
-          XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
-        TF_LITE_KERNEL_LOG(context, "Softmax: insufficient scratch memory");
-        return kTfLiteError;
-      }
+    void *p_scratch = static_cast<void*>(
+        context->GetScratchBuffer(context, data.scratch_tensor_index));
 
       for (int i = 0; i < outer_size; ++i) {
         int err = xa_nn_vec_softmax_asym8s_16(
@@ -238,14 +231,8 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context,
       const int depth =
           MatchingDim(input_shape, trailing_dim, output_shape, trailing_dim);
 
-      ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-      void* p_scratch = xtensa_nnlib_scratch_buf;
-
-      if (get_softmax_scratch_size(-4, -4, depth) >
-          XTENSA_NNLIB_MAX_SCRATCH_SIZE) {
-        TF_LITE_KERNEL_LOG(context, "Softmax: insufficient scratch memory");
-        return kTfLiteError;
-      }
+      void *p_scratch = static_cast<void*>(
+          context->GetScratchBuffer(context, data.scratch_tensor_index));
 
       for (int i = 0; i < outer_size; ++i) {
         int err = xa_nn_vec_softmax_asym8s_asym8s(
@@ -268,7 +255,7 @@ TfLiteStatus SoftmaxQuantized(TfLiteContext* context,
 
 void* SoftmaxInit(TfLiteContext* context, const char* buffer, size_t length) {
   TFLITE_DCHECK(context->AllocatePersistentBuffer != nullptr);
-  return context->AllocatePersistentBuffer(context, sizeof(SoftmaxParams));
+  return context->AllocatePersistentBuffer(context, sizeof(OpData));
 }
 
 TfLiteStatus SoftmaxPrepare(TfLiteContext* context, TfLiteNode* node) {
@@ -281,7 +268,9 @@ TfLiteStatus SoftmaxPrepare(TfLiteContext* context, TfLiteNode* node) {
   TF_LITE_ENSURE(context, output != nullptr);
 
   TF_LITE_ENSURE(context, node->user_data != nullptr);
-  SoftmaxParams* op_data = static_cast<SoftmaxParams*>(node->user_data);
+  OpData* data = static_cast<OpData*>(node->user_data);
+  SoftmaxParams* op_data = &(data->op_data);
+
   // Only allocate LUTs for KTfLiteInt16 data type
   if (input->type == kTfLiteInt16) {
     void* raw_exp_lut = context->AllocatePersistentBuffer(
@@ -316,6 +305,36 @@ TfLiteStatus SoftmaxPrepare(TfLiteContext* context, TfLiteNode* node) {
     op_data->scale = output->params.scale;
   }
 
+  // Calculate scratch memory requirements and request scratch buffer
+  const RuntimeShape& input_shape = GetTensorShape(input);
+  const RuntimeShape& output_shape = GetTensorShape(output);
+  const int trailing_dim = input_shape.DimensionsCount() - 1;
+  const int depth =
+    MatchingDim(input_shape, trailing_dim, output_shape, trailing_dim);
+
+  if ((input->type == kTfLiteInt8) ||
+      (input->type == kTfLiteUInt8)) {
+    int required_scratch = get_softmax_scratch_size(PREC_ASYM8, PREC_ASYM8, depth);
+
+    if (required_scratch <= 0) {
+      TF_LITE_KERNEL_LOG(context,
+          "softmax: get_softmax_scratch_size failed");
+      return kTfLiteError;
+    }
+    const TfLiteStatus scratch_status = context->RequestScratchBufferInArena(
+        context, required_scratch,
+        &(data->scratch_tensor_index));
+    TF_LITE_ENSURE_OK(context, scratch_status);
+  }
+
+  if (input->type == kTfLiteFloat32) {
+    int required_scratch = depth * sizeof(float);
+    const TfLiteStatus scratch_status = context->RequestScratchBufferInArena(
+        context, required_scratch,
+        &(data->scratch_tensor_index));
+    TF_LITE_ENSURE_OK(context, scratch_status);
+  }
+
   auto* params = static_cast<TfLiteSoftmaxParams*>(node->builtin_data);
   return CalculateSoftmaxParams(context, input, output, params, op_data);
 }
@@ -325,16 +344,16 @@ TfLiteStatus SoftmaxEval(TfLiteContext* context, TfLiteNode* node) {
   TfLiteEvalTensor* output = tflite::micro::GetEvalOutput(context, node, 0);
 
   TFLITE_DCHECK(node->user_data != nullptr);
-  SoftmaxParams op_data = *static_cast<SoftmaxParams*>(node->user_data);
+  OpData data = *static_cast<OpData*>(node->user_data);
 
   switch (input->type) {
     case kTfLiteFloat32: {
-      return SoftmaxFloat(context, input, output, op_data);
+      return SoftmaxFloat(context, input, output, data);
     }
     case kTfLiteInt8:
     case kTfLiteUInt8:
     case kTfLiteInt16: {
-      return SoftmaxQuantized(context, input, output, op_data);
+      return SoftmaxQuantized(context, input, output, data);
     }
     default:
       TF_LITE_KERNEL_LOG(context, "Type %s (%d) not supported.",

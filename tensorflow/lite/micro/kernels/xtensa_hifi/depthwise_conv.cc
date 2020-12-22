@@ -81,6 +81,8 @@ struct OpData {
   // uint8_t these would be 0 and 255.
   int32_t output_activation_min;
   int32_t output_activation_max;
+
+  int scratch_tensor_index;
 };
 
 TfLiteStatus CalculateOpData(TfLiteContext* context, TfLiteNode* node,
@@ -185,6 +187,75 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
   data->filter_zero_point = filter->params.zero_point;
   data->output_zero_point = output->params.zero_point;
 
+  // Calculate scratch memory requirements and request scratch buffer
+  //TODO(pnikam-cad): update after integrating new HiFi 4 lib
+#ifdef NNLIB_HIFI5
+  if ((input->type == kTfLiteInt8) ||
+      (input->type == kTfLiteUInt8) ||
+      (input->type == kTfLiteFloat32))
+#else
+  if ((input->type == kTfLiteUInt8) ||
+      (input->type == kTfLiteFloat32))
+#endif
+  {
+    const RuntimeShape& input_shape = GetTensorShape(input);
+    const RuntimeShape& output_shape = GetTensorShape(output);
+
+    const int input_height = input_shape.Dims(1);
+    const int input_width = input_shape.Dims(2);
+    const int input_depth = input_shape.Dims(3);
+    const int output_height = output_shape.Dims(1);
+    const int output_width = output_shape.Dims(2);
+
+    const int depth_multiplier = params->depth_multiplier;
+    const int stride_height = params->stride_height;
+    const int stride_width = params->stride_width;
+    const int pad_width = data->padding.width;
+    const int pad_height = data->padding.height;
+
+    int input_precision;
+
+    if (input->type == kTfLiteInt8) {
+      input_precision = -4; //PREC_ASYM8S;
+    } else if (input->type == kTfLiteUInt8) {
+      input_precision = PREC_ASYM8;
+    } else {
+      input_precision = PREC_F32;
+    }
+
+    int required_scratch = xa_nn_conv2d_depthwise_getsize(
+        input_height, input_width, input_depth, filter_height, filter_width,
+        depth_multiplier, stride_width, stride_height, pad_width, pad_height,
+        output_height, output_width, input_precision, 0 /* NHWC */);
+
+    if (required_scratch <= 0) {
+      TF_LITE_KERNEL_LOG(
+          context,
+          "DepthwiseConv: xa_nn_conv2d_depthwise_getsize failed");
+      return kTfLiteError;
+    }
+
+#ifndef NNLIB_HIFI5
+    const RuntimeShape& filter_shape = GetTensorShape(filter);
+    const int filter_depth = filter_shape.Dims(3);
+
+    if (input->type == kTfLiteUInt8) {
+      int filter_depth_padded = (filter_depth + 3) & (~3);
+      int filter_size_padded = filter_height * filter_width * filter_depth_padded;
+      required_scratch += ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded, 8);
+    } else if (input->type == kTfLiteFloat32) {
+      int filter_depth_padded = (filter_depth + 1) & (~1);
+      int filter_size_padded = filter_height * filter_width * filter_depth_padded;
+      required_scratch += ALIGNED_SIZE(sizeof(float) * filter_size_padded, 8);
+    }
+#endif /* NNLIB_HIFI5 */
+
+    const TfLiteStatus scratch_status = context->RequestScratchBufferInArena(
+        context, required_scratch,
+        &(data->scratch_tensor_index));
+    TF_LITE_ENSURE_OK(context, scratch_status);
+  }
+
   return kTfLiteOk;
 }
 
@@ -236,34 +307,14 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
     int32_t err, input_data_format = 0, output_data_format = 0;
     uint8_t* p_scratch;
     float* p_filter;
-    int required_scratch;
-    int input_precision = PREC_F32;
 
-    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    p_scratch = xtensa_nnlib_scratch_buf;
-
-    required_scratch = xa_nn_conv2d_depthwise_getsize(
-        input_height, input_width, input_depth, filter_height, filter_width,
-        depth_multiplier, stride_width, stride_height, pad_width, pad_height,
-        output_height, output_width, input_precision, input_data_format);
-
-    if (required_scratch <= 0) {
-      TF_LITE_KERNEL_LOG(
-          context, "DepthwiseConvFloat: xa_nn_conv2d_depthwise_getsize failed");
-      return kTfLiteError;
-    }
+    p_scratch = static_cast<uint8_t*>(
+        context->GetScratchBuffer(context, data.scratch_tensor_index));
 
 #ifndef NNLIB_HIFI5
     const int filter_depth = filter_shape.Dims(3);
     int filter_depth_padded = (filter_depth + 1) & (~1);
     int filter_size_padded = filter_height * filter_width * filter_depth_padded;
-    required_scratch += ALIGNED_SIZE(sizeof(float) * filter_size_padded, 8);
-    if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-      TF_LITE_KERNEL_LOG(context,
-                         "DepthwiseConvFloat: insufficient scratch memory");
-      return kTfLiteError;
-    }
-
     p_filter = reinterpret_cast<float*>(p_scratch);
     p_scratch += ALIGNED_SIZE(sizeof(float) * filter_size_padded, 8);
 
@@ -396,30 +447,10 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
     TFLITE_DCHECK_EQ(bias_shape.FlatSize(), output_depth);
 
     int32_t err, i, input_data_format = 0, output_data_format = 0;
-    void* p_scratch;
-    int required_scratch;
-    int input_precision = PREC_ASYM8;
+    uint8_t* p_scratch;
 
-    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    p_scratch = xtensa_nnlib_scratch_buf;
-
-    required_scratch = xa_nn_conv2d_depthwise_getsize(
-        input_height, input_width, input_depth, filter_height, filter_width,
-        depth_multiplier, stride_width, stride_height, pad_width, pad_height,
-        output_height, output_width, input_precision, input_data_format);
-
-    if (required_scratch <= 0) {
-      TF_LITE_KERNEL_LOG(
-          context,
-          "DepthwiseConvSym8PerChannel: xa_nn_conv2d_depthwise_getsize failed");
-      return kTfLiteError;
-    }
-
-    if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-      TF_LITE_KERNEL_LOG(
-          context, "DepthwiseConvSym8PerChannel: insufficient scratch memory");
-      return kTfLiteError;
-    }
+    p_scratch = static_cast<uint8_t*>(
+        context->GetScratchBuffer(context, data.scratch_tensor_index));
 
     for (i = 0; i < batches; i++) {
       err = xa_nn_conv2d_depthwise_per_chan_sym8sxasym8s(
@@ -518,39 +549,17 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
     TFLITE_DCHECK_EQ(bias_shape.FlatSize(), output_depth);
 
     int32_t err, i, input_data_format = 0, output_data_format = 0;
-    uint8_t* p_scratch;
-    uint8_t* p_filter;
-    int required_scratch;
-    int input_precision = PREC_ASYM8;
 
-    ALLOCATE_XTENSA_NNLIB_SCRATCH_MEM;
-    p_scratch = xtensa_nnlib_scratch_buf;
-
-    required_scratch = xa_nn_conv2d_depthwise_getsize(
-        input_height, input_width, input_depth, filter_height, filter_width,
-        depth_multiplier, stride_width, stride_height, pad_width, pad_height,
-        output_height, output_width, input_precision, input_data_format);
-
-    if (required_scratch <= 0) {
-      TF_LITE_KERNEL_LOG(
-          context, "DepthwiseConvAsym8: xa_nn_conv2d_depthwise_getsize failed");
-      return kTfLiteError;
-    }
+    uint8_t* p_scratch = static_cast<uint8_t*>(
+        context->GetScratchBuffer(context, data.scratch_tensor_index));
 
 #ifndef NNLIB_HIFI5
     const int filter_depth = filter_shape.Dims(3);
     int filter_depth_padded = (filter_depth + 3) & (~3);
     int filter_size_padded = filter_height * filter_width * filter_depth_padded;
-    required_scratch += ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded, 8);
-
-    if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-      TF_LITE_KERNEL_LOG(context,
-                         "DepthwiseConvAsym8: insufficient scratch memory");
-      return kTfLiteError;
-    }
-
-    p_filter = p_scratch;
+    uint8_t* p_filter = p_scratch;
     p_scratch += ALIGNED_SIZE(sizeof(uint8_t) * filter_size_padded, 8);
+
     int pad_value = filter_depth_padded - filter_depth;
 
     for (int h = 0; h < filter_height * filter_width; h++) {
@@ -560,12 +569,7 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
              pad_value);
     }
 #else
-    if (required_scratch > static_cast<int>(XTENSA_NNLIB_MAX_SCRATCH_SIZE)) {
-      TF_LITE_KERNEL_LOG(context,
-                         "DepthwiseConvAsym8: insufficient scratch memory");
-      return kTfLiteError;
-    }
-    p_filter = const_cast<uint8_t*>(filter_data);
+    uint8_t* p_filter = const_cast<uint8_t*>(filter_data);
 #endif
 
     for (i = 0; i < batches; i++) {

@@ -40,15 +40,19 @@ XTENSA_CORE, set TARGET=xtensa_hifi. Additionally TARGET_ARCH can be used to
 select optimized HiFi NN kernels specific to the processor configuration.
 
 For HiFi 4, HiFi 3z, Fusion F1 DSPs:
-setenv XTENSA_BASE <XtDevTools>
-make -f tensorflow/lite/micro/tools/make/Makefile TARGET=xtensa_hifi TARGET_ARCH=hifi4 XTENSA_TOOLS_VERSION=RI.2019.2 XTENSA_CORE=<CORE> <target>
+setenv XTENSA_BASE <path_to_XtDevTools/install>
+make -f tensorflow/lite/micro/tools/make/Makefile TARGET=xtensa_hifi TARGET_ARCH=hifi4 XTENSA_TOOLS_VERSION=RI-2020.5-linux XTENSA_CORE=<HiFi 4/ HiFi 3z / FusionF1 Config> <build_target>
 
 For HiFi 5 DSP:
-setenv XTENSA_BASE <XtDevTools>
-make -f tensorflow/lite/micro/tools/make/Makefile TARGET=xtensa_hifi TARGET_ARCH=hifi5 XTENSA_TOOLS_VERSION=RI.2019.2 XTENSA_CORE=<CORE> <target>
+setenv XTENSA_BASE <path_to_XtDevTools/install>
+make -f tensorflow/lite/micro/tools/make/Makefile TARGET=xtensa_hifi TARGET_ARCH=hifi5 XTENSA_TOOLS_VERSION=RI-2020.5-linux XTENSA_CORE=<HiFi 5 Config> <build_target>
 
-A scratch memory allocation is needed for the HiFi optimized kernels. This
-allocation is currently done on stack and it's size can be controlled by
-defining 'XTENSA_NNLIB_MAX_SCRATCH_SIZE' appropriately in the file
-'tensorflow/lite/micro/tools/make/ext_libs/xtensa_hifi_nn_library.inc
+Build targets can be:
+test : Build and run all test cases
+test_person_detection_test: Person detection example
+test_person_detection_test_int8: Person detection int8 example
+test_micro_speech_test: Micro speech example
+test_keyword_benchmark: Wakeword detection benchmark
+clean: Clean all builds
+clean_downloads: Delete third party download files (previous NN Library downloads)
 
