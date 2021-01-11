@@ -100,9 +100,11 @@ ifneq ($(filter xtensa_hifi, $(ALL_TAGS)),)
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi5/xa_nn_floor_f32.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi5/xa_nn_elm_add_f32.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi5/xa_nn_elm_add_quant8.c \
+                             $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi5/xa_nn_elm_sub_quant8.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi5/xa_nn_elm_mul_f32.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi5/xa_nn_elm_mul_quant8.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi5/xa_nn_elm_quantize.c \
+                             $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi5/xa_nn_elm_compare_quant8.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/cnn/hifi5/xa_nn_conv2d_std_circ_buf.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/cnn/hifi5/xa_nn_conv2d_std_asym8xasym8.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/cnn/hifi5/xa_nn_conv2d_std_sym8sxasym8s.c \

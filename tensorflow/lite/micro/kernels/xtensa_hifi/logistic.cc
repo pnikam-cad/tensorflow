@@ -1,5 +1,5 @@
-/*
-* Copyright (c) 2019-2020 Cadence Design Systems, Inc.
+/*******************************************************************************
+* Copyright (c) 2020-2021 Cadence Design Systems, Inc.
 *
 * Permission is hereby granted, free of charge, to any person obtaining
 * a copy of this software and associated documentation files (the
@@ -19,7 +19,8 @@
 * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
+
+******************************************************************************/
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -148,12 +149,34 @@ TfLiteStatus LogisticEval(TfLiteContext* context, TfLiteNode* node) {
   } else if (input->type == kTfLiteInt8) {
     switch (output->type) {
       case kTfLiteInt8: {
+
+#ifdef NNLIB_HIFI5
+        int err;
+        const int8_t *input_data_ptr;
+        int8_t *output_data_ptr;
+        const RuntimeShape& input_shape  = tflite::micro::GetTensorShape(input);
+        const RuntimeShape& output_shape = tflite::micro::GetTensorShape(output);
+        const int flat_size = MatchingFlatSize(input_shape, output_shape);
+
+        input_data_ptr  = tflite::micro::GetTensorData<int8_t>(input);
+        output_data_ptr = tflite::micro::GetTensorData<int8_t>(output);
+        
+        err = xa_nn_vec_sigmoid_asym8s_asym8s(output_data_ptr, 
+                                              input_data_ptr,
+                                              data->input_zero_point,
+                                              data->input_range_radius,
+                                              data->input_multiplier,
+                                              data->input_left_shift,
+                                              flat_size);
+        CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_sigmoid_asym8s_asym8s failed");
+#else
         reference_integer_ops::Logistic(
             data->input_zero_point, data->input_range_radius,
             data->input_multiplier, data->input_left_shift,
             NumElements(input->dims),
             tflite::micro::GetTensorData<int8_t>(input),
             tflite::micro::GetTensorData<int8_t>(output));
+#endif /* NNLIB_HIFI5 */
         return kTfLiteOk;
       }
       default:

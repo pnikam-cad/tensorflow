@@ -221,16 +221,10 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
       input_precision = PREC_F32;
     }
 
-#ifdef NNLIB_HIFI5
-    int required_scratch = xa_nn_conv2d_std_getsize(
-        input_height, input_depth, filter_height, filter_width, stride_height,
-        pad_height, output_height, input_precision);
-#else
     int output_channels = output->dims->data[3];
     int required_scratch = xa_nn_conv2d_std_getsize(
         input_height, input_depth, filter_height, filter_width, stride_height,
         pad_height, output_height, output_channels, input_precision);
-#endif
 
     if (required_scratch <= 0) {
       TF_LITE_KERNEL_LOG(context,

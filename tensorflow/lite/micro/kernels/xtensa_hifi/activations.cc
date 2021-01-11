@@ -213,37 +213,54 @@ TfLiteStatus ReluEval(TfLiteContext* context, TfLiteNode* node) {
       return kTfLiteOk;
     }
     case kTfLiteInt8: {
+#ifdef NNLIB_HIFI5
       int err;
       const int length = MatchingFlatSize(tflite::micro::GetTensorShape(input),
                                           tflite::micro::GetTensorShape(output));
-      err = xa_nn_vec_activation_min_max_8_8(tflite::micro::GetTensorData<int8_t>(output),
+      err = xa_nn_vec_relu_asym8s_asym8s(tflite::micro::GetTensorData<int8_t>(output),
                                              tflite::micro::GetTensorData<int8_t>(input),
-                                             data.zero_int8,
-                                             std::numeric_limits<int8_t>::max(),
+                                         data.params.input_offset, 
+                                         data.params.output_multiplier, 
+                                         data.params.output_shift, 
+                                         data.params.output_offset, 
+                                         data.params.quantized_activation_min, 
+                                         data.params.quantized_activation_max, 
                                              length);
 
-      CHECK_ERR_HIFI_NNLIB_KER(err,
-                               "Relu: xa_nn_vec_activation_min_max_8_8 failed");
+      CHECK_ERR_HIFI_NNLIB_KER(err,"xa_nn_vec_relu_asym8s_asym8s failed");
       return kTfLiteOk;
+#else
+      ReluQuantized<int8_t>(data, tflite::micro::GetTensorShape(input),
+                            tflite::micro::GetTensorShape(output),
+                            tflite::micro::GetTensorData<int8_t>(input),
+                            tflite::micro::GetTensorData<int8_t>(output));
+      return kTfLiteOk;
+#endif /* NNLIB_HIFI5 */
     }
     case kTfLiteUInt8: {
+#ifdef NNLIB_HIFI5
       int err;
-      const uint8_t* inp_data_ptr;
-      uint8_t* out_data_ptr;
-      const RuntimeShape& input_shape = tflite::micro::GetTensorShape(input);
-      const RuntimeShape& output_shape = tflite::micro::GetTensorShape(output);
-      const int flat_size = MatchingFlatSize(input_shape, output_shape);
+      const int length = MatchingFlatSize(tflite::micro::GetTensorShape(input),
+                                          tflite::micro::GetTensorShape(output));
+      err = xa_nn_vec_relu_asym8u_asym8u(tflite::micro::GetTensorData<uint8_t>(output),
+                                         tflite::micro::GetTensorData<uint8_t>(input),
+                                         data.params.input_offset, 
+                                         data.params.output_multiplier, 
+                                         data.params.output_shift, 
+                                         data.params.output_offset, 
+                                         data.params.quantized_activation_min, 
+                                         data.params.quantized_activation_max, 
+                                         length);
 
-      inp_data_ptr = tflite::micro::GetTensorData<uint8_t>(input);
-      out_data_ptr = tflite::micro::GetTensorData<uint8_t>(output);
-
-      err = xa_nn_vec_activation_min_max_asym8_asym8(
-          out_data_ptr, inp_data_ptr, data.zero_uint8,
-          std::numeric_limits<uint8_t>::max(), flat_size);
-
-      CHECK_ERR_HIFI_NNLIB_KER(
-          err, "xa_nn_vec_activation_min_max_asym8_asym8 failed");
+      CHECK_ERR_HIFI_NNLIB_KER(err, "xa_nn_vec_relu_asym8u_asym8u failed");
       return kTfLiteOk;
+#else
+      ReluQuantized<uint8_t>(data, tflite::micro::GetTensorShape(input),
+                             tflite::micro::GetTensorShape(output),
+                             tflite::micro::GetTensorData<uint8_t>(input),
+                             tflite::micro::GetTensorData<uint8_t>(output));
+      return kTfLiteOk;
+#endif /* NNLIB_HIFI5 */
     }
     default: {
       TF_LITE_KERNEL_LOG(context, "Only float32 is supported currently, got %s",
