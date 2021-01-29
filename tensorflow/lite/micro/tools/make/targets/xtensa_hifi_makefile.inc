@@ -30,16 +30,11 @@ $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),x
   $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),xa_nnlib_hifi5,))
 
   PLATFORM_ARGS = \
-    -mno-mul16 \
-    -mno-mul32 \
-    -mno-div32 \
     -fsigned-char \
-    -fno-exceptions \
-    -mlongcalls \
-    -INLINE:requested \
     -mcoproc \
+    -mlongcalls \
+    -fvectorize \
     -fno-zero-initialized-in-bss \
-    -mtext-section-literals \
     -fno-unsafe-math-optimizations \
 
 
@@ -50,12 +45,6 @@ $(eval $(call add_third_party_download,$(XTENSA_HIFI5_URL),$(XTENSA_HIFI5_MD5),x
 
   CXXFLAGS += $(PLATFORM_ARGS)
   CCFLAGS += $(PLATFORM_ARGS)
-
-ifneq (,$(filter hifi4%, $(TARGET_ARCH)))
-  # TODO(pnikam-cad): analyse and fix issues seen with -O3 optimization level
-  # 1. Fusion F1, quantization_util_test
-  CXXFLAGS += -O0
-endif
 
   # TODO(b/150240249): Do not remove -fno-rtti once that works for the Xtensa toolchain.
   CXXFLAGS := $(filter-out -fno-rtti, $(CXXFLAGS))
