@@ -295,30 +295,19 @@ TfLiteStatus EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
     }
   }
 #else
-  int32_t* scratch_tensor = static_cast<int32_t*>(
-      context->GetScratchBuffer(context, data.scratch_tensor_index));
-  int32_t* scratch_output_tensor = static_cast<int32_t*>(
-      context->GetScratchBuffer(context, data.scratch_output_tensor_index));
-
   // Shift states.
   int16_t* const state_ptr =
       tflite::micro::GetTensorData<int16_t>(activation_state_tensor);
 
+  int num_bytes = sizeof(*state_ptr) * (n_batch * n_filter * n_memory - 1);
   // Left shift the activation_state.
-  {
-    int16_t* new_state_start = state_ptr;
-    const int16_t* old_state_start = state_ptr + 1;
-    const int16_t* old_state_end = state_ptr + n_batch * n_filter * n_memory;
-    while (old_state_start != old_state_end) {
-      *new_state_start++ = *old_state_start++;
-    }
-  }
+  xa_nn_memmove_16(state_ptr, state_ptr + 1, num_bytes);
 #endif
 
 // Note: no need to clear the latest activation, matmul is not accumulative.
 
 // Feature matmul.
-#ifndef NNLIB_HIFI5
+#if 0 // Reference version
   {
     int16_t* state =
         tflite::micro::GetTensorData<int16_t>(activation_state_tensor);
@@ -372,7 +361,7 @@ TfLiteStatus EvalIntegerSVDF(TfLiteContext* context, TfLiteNode* node,
   }
 #endif
 
-#ifndef NNLIB_HIFI5
+#if 0 // Reference version
   // Time.
   {
     for (int b = 0; b < n_batch; ++b) {

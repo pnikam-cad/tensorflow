@@ -149,7 +149,6 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
   } else if (input->type == kTfLiteInt16) {
     size_t size = ElementCount(*input->dims);
     switch (output->type) {
-#if defined NNLIB_HIFI5
       case kTfLiteInt8: {
         int err = 0;
         err = xa_nn_elm_quantize_asym16s_asym8s(
@@ -161,15 +160,6 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
                                  "xa_nn_elm_quantize_asym16sxasym8s failed");
         break;
       }
-#else
-      case kTfLiteInt8:
-        reference_ops::Requantize(tflite::micro::GetTensorData<int16_t>(input),
-                                  size, data->output_multiplier,
-                                  data->output_shift, data->input_zero_point,
-                                  data->quantization_params.zero_point,
-                                  tflite::micro::GetTensorData<int8_t>(output));
-        break;
-#endif
       case kTfLiteInt16:
         reference_ops::Requantize(
             tflite::micro::GetTensorData<int16_t>(input), size,

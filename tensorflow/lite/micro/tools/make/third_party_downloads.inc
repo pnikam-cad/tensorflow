@@ -85,8 +85,8 @@ EMBARC_MLI_PRE_COMPILED_MD5 := "173990c2dde4efef6a2c95b92d1f0244"
 ZEPHYR_URL := "http://mirror.tensorflow.org/github.com/antmicro/zephyr/archive/55e36b9.zip"
 ZEPHYR_MD5 := "755622eb4812fde918a6382b65d50c3b"
 
-XTENSA_HIFI4_URL :="http://github.com/foss-xtensa/nnlib-hifi4/raw/master/archive/xa_nnlib_hifi4_12_22.zip"
-XTENSA_HIFI4_MD5 :="bb4aa8bd589ee1b4b9fd71349a1e7317"
+XTENSA_HIFI4_URL :="http://github.com/foss-xtensa/nnlib-hifi4/raw/master/archive/xa_nnlib_hifi4_02_11_2021.zip"
+XTENSA_HIFI4_MD5 :="8b934f61ffe0a966644849602810fb1b"
 
 XTENSA_HIFI5_URL :="https://github.com/foss-xtensa/nnlib-hifi5/raw/master/archive/xa_nnlib_hifi5_01_11.zip"
 XTENSA_HIFI5_MD5 :="c89a56f973a0ad0858c7e056628dae9c"

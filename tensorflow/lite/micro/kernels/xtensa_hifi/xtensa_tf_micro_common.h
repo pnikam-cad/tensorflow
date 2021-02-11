@@ -82,9 +82,16 @@ limitations under the License.
   int32_t duration_ticks; \
   start_ticks = tflite::GetCurrentTimeTicks();
 
+/* Profiling macro for use in the example files */
 #define MICRO_TIMER_STOP(error_reporter, name)                    \
   duration_ticks = tflite::GetCurrentTimeTicks() - start_ticks;   \
   TF_LITE_REPORT_ERROR(error_reporter, "%s took %d cycles", name, \
+                       duration_ticks);
+
+/* Profiling macro for use in the kernel files */
+#define MICRO_KERNEL_TIMER_STOP(error_reporter, name)                    \
+  duration_ticks = tflite::GetCurrentTimeTicks() - start_ticks;   \
+  TF_LITE_KERNEL_LOG(error_reporter, "%s took %d cycles", name, \
                        duration_ticks);
 
 #endif /* __XTENSA_TF_MICRO_COMMON__ */

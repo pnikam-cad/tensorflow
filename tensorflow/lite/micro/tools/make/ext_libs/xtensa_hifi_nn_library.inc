@@ -17,11 +17,14 @@ ifneq ($(filter xtensa_hifi, $(ALL_TAGS)),)
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/activations/hifi4/xa_nn_activations_32_8.c  \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/activations/hifi4/xa_nn_activations_8_8.c  \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/activations/hifi4/xa_nn_softmax_asym8_asym8.c \
+                             $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi4/xa_nn_memmove_16.c \
+                             $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi4/xa_nn_dot_prod_16x16.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi4/xa_nn_floor_f32.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi4/xa_nn_elm_add_f32.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi4/xa_nn_elm_add_quant8.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi4/xa_nn_elm_mul_f32.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi4/xa_nn_elm_mul_quant8.c \
+                             $(XTENSA_PATH)/$(NNLIB)/algo/kernels/basic/hifi4/xa_nn_elm_quantize.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/cnn/hifi4/xa_nn_conv2d_std_circ_buf.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/cnn/hifi4/xa_nn_conv2d_std_asym8xasym8.c \
                              $(XTENSA_PATH)/$(NNLIB)/algo/kernels/cnn/hifi4/xa_nn_conv2d_std_sym8sxasym8s.c \

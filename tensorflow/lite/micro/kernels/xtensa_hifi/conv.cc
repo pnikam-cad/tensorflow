@@ -439,7 +439,6 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
     int8_t *p_filter;
     int out_length = output_height * output_width * output_depth;
 
-#ifdef NNLIB_HIFI5
     if(filter_height == 1 && filter_width == 1)
     {
       for (int batch = 0; batch < batches; ++batch) {
@@ -474,7 +473,6 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
       }
     }
     else
-#endif /* NNLIB_HIFI5 */
     {
       p_scratch = static_cast<void*>(
           context->GetScratchBuffer(context, data.scratch_tensor_index));
