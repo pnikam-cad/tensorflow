@@ -88,8 +88,8 @@ ZEPHYR_MD5 := "755622eb4812fde918a6382b65d50c3b"
 XTENSA_HIFI4_URL :="http://github.com/foss-xtensa/nnlib-hifi4/raw/master/archive/xa_nnlib_hifi4_02_11_2021.zip"
 XTENSA_HIFI4_MD5 :="8b934f61ffe0a966644849602810fb1b"
 
-XTENSA_HIFI5_URL :="https://github.com/foss-xtensa/nnlib-hifi5/raw/master/archive/xa_nnlib_hifi5_01_11.zip"
-XTENSA_HIFI5_MD5 :="c89a56f973a0ad0858c7e056628dae9c"
+XTENSA_HIFI5_URL :="https://github.com/foss-xtensa/nnlib-hifi5/raw//master/archive/xa_nnlib_hifi5_02_22.zip"
+XTENSA_HIFI5_MD5 :="08cd4d446b3e0b7d180f9ef0dec9ad0a"
 
 ETHOSU_URL := "https://git.mlplatform.org/ml/ethos-u/ethos-u-core-driver.git/snapshot/ethos-u-core-driver-2b201c340788ac582cec160b7217c2b5405b04f9.tar.gz"
 ETHOSU_MD5 := "0c148b90a1ee01de398892eb3a63e717"

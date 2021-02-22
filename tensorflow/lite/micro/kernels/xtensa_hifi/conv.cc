@@ -222,14 +222,36 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
     }
 
     int output_channels = output->dims->data[3];
-    int required_scratch = xa_nn_conv2d_std_getsize(
-        input_height, input_depth, filter_height, filter_width, stride_height,
-        pad_height, output_height, output_channels, input_precision);
+    int required_scratch = 0;
 
-    if (required_scratch <= 0) {
-      TF_LITE_KERNEL_LOG(context,
-          "conv2d_std: xa_nn_conv2d_std_getsize failed");
-      return kTfLiteError;
+#ifdef NNLIB_HIFI5
+    /* Dilation is supported on HiFi 5 NN Library for input stride of one */
+    if( ((params->dilation_height_factor > 1) && (params->stride_height == 1)) ||
+     ((params->dilation_width_factor > 1) && (params->stride_width == 1)) ) {
+      required_scratch = xa_nn_dilated_conv2d_std_getsize(
+          input_height, input_depth, filter_height, filter_width, stride_height,
+          pad_height, output_height, input_precision, params->dilation_height_factor);
+
+      if (required_scratch <= 0) {
+        TF_LITE_KERNEL_LOG(context,
+            "conv2d_std: xa_nn_dilated_conv2d_std_getsize failed");
+        return kTfLiteError;
+      }
+    } else 
+#endif
+  /* Dilation is currently not supported on HiFi 4 NN Library */ 
+  if ((params->dilation_width_factor == 1) &&
+      (params->dilation_height_factor == 1)) {
+
+      required_scratch = xa_nn_conv2d_std_getsize(
+        input_height, input_depth, filter_height, filter_width, stride_height,
+				pad_height, output_height, output_channels, input_precision);
+
+      if (required_scratch <= 0) {
+        TF_LITE_KERNEL_LOG(context,
+            "conv2d_std: xa_nn_conv2d_std_getsize failed");
+        return kTfLiteError;
+      }
     }
 
     if (input->type == kTfLiteFloat32) {
@@ -400,8 +422,15 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
                              TfLiteEvalTensor* output,
                              TfLiteEvalTensor* im2col) {
 
+#ifdef NNLIB_HIFI5
+  /* Dilation is supported on HiFi 5 NN Library for input stride of one */
+  if ((((params->dilation_width_factor > 1) || (params->dilation_height_factor > 1)) &&
+       ((params->stride_width > 1) || (params->stride_height > 1))) == 0) {
+#else
+  /* Dilation is currently not supported on HiFi 4 NN Library */ 
   if ((params->dilation_width_factor == 1) &&
       (params->dilation_height_factor == 1)) {
+#endif /* NNLIB_HIFI5 */
     const int32_t input_offset = -data.input_zero_point;
     const int32_t output_offset = data.output_zero_point;
     const int8_t *input_data, *filter_data;
@@ -483,14 +512,31 @@ TfLiteStatus EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
         int8_t* p_out_temp;
         p_out_temp = &output_data[batch * out_length];
 
-        err = xa_nn_conv2d_std_per_chan_sym8sxasym8s(p_out_temp,
-                &input_data[batch * input_height * input_width * input_depth],
-                p_filter,  // filter_data,
-                bias_data, input_height, input_width, input_depth, filter_height,
-                filter_width, output_depth, stride_width, stride_height, pad_width,
-                pad_height, output_height, output_width, input_offset,
-                data.per_channel_output_multiplier, data.per_channel_output_shift, output_offset, output_data_format,
-                static_cast<void*>(p_scratch));
+#ifdef NNLIB_HIFI5
+        if ((params->dilation_width_factor > 1)  ||
+            (params->dilation_height_factor > 1))
+        {
+          err = xa_nn_dilated_conv2d_std_per_chan_sym8sxasym8s(p_out_temp,
+              &input_data[batch * input_height * input_width * input_depth],
+              p_filter,  // filter_data,
+              bias_data, input_height, input_width, input_depth, filter_height,
+              filter_width, output_depth, stride_width, stride_height, pad_width,
+              pad_height, output_height, output_width, input_offset,
+              data.per_channel_output_multiplier, data.per_channel_output_shift, output_offset, output_data_format,
+              static_cast<void*>(p_scratch), params->dilation_height_factor, params->dilation_width_factor);
+        }
+        else
+#endif
+        {
+          err = xa_nn_conv2d_std_per_chan_sym8sxasym8s(p_out_temp,
+              &input_data[batch * input_height * input_width * input_depth],
+              p_filter,  // filter_data,
+              bias_data, input_height, input_width, input_depth, filter_height,
+              filter_width, output_depth, stride_width, stride_height, pad_width,
+              pad_height, output_height, output_width, input_offset,
+              data.per_channel_output_multiplier, data.per_channel_output_shift, output_offset, output_data_format,
+              static_cast<void*>(p_scratch));
+        }
 
         CHECK_ERR_HIFI_NNLIB_KER(
             err, "conv2d_std_sym8s: xa_nn_conv2d_std_sym8sxasym8s failed");
